@@ -2,6 +2,7 @@ services:
   - type: worker
     name: nightflow-bot
     runtime: python
+    plan: free 
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
