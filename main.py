@@ -448,6 +448,7 @@ def main():
                 AWAITING_ROTATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_rotating_schedule)],
             },
             fallbacks=[CommandHandler('cancel', cancel)]
+            per_message=True  # Add this line
         )
         
         # Add handlers
