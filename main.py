@@ -522,8 +522,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         result = supabase_client.table('users').select('*').eq('telegram_id', user.id).execute()
 
+        # Brand new user
         if not result.data:
-
+            keyboard = [
+                [InlineKeyboardButton("🌙 Constant Schedule", callback_data='shift_constant')],
+                [InlineKeyboardButton("🔄 Rotating Schedule", callback_data='shift_rotating')],
+                [InlineKeyboardButton("ℹ️ Learn More", callback_data='learn_more')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
             welcome_msg = (
                 f"🌙 **Welcome to Nightflow, {user.first_name}!**\n\n"
@@ -561,6 +567,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         has_schedule = bool(const_result.data or rotating_result.data)
 
+        # Existing user but no active schedule
         if not has_schedule:
             keyboard = [
                 [InlineKeyboardButton("🌙 Constant Schedule", callback_data='shift_constant')],
@@ -575,14 +582,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        keyboard = [
-            [InlineKeyboardButton("📋 Today", callback_data='show_today')],
-            [InlineKeyboardButton("☕ Can I drink coffee now?", callback_data='caffeine_check')],
-            [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
-            [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
-            [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Existing user with schedule
+        reply_markup = build_main_menu()
 
         welcome_back_msg = (
             f"Welcome back, {user.first_name}.\n\n"
@@ -598,6 +599,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in start: {e}")
         logger.error(traceback.format_exc())
         await update.message.reply_text("Sorry, something went wrong. Please try again.")
+
 async def send_today_summary(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
     """Send a user-friendly summary of today's plan."""
     try:
@@ -1243,6 +1245,17 @@ async def adjust_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
+def build_main_menu():
+    """Build main menu keyboard."""
+    keyboard = [
+        [InlineKeyboardButton("📋 Today", callback_data='show_today')],
+        [InlineKeyboardButton("☕ Caffeine Check", callback_data='caffeine_check')],
+        [InlineKeyboardButton("🍽️ Meal Advice", callback_data='meal_check')],
+        [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
+        [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
+        [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle callback queries."""
     query = update.callback_query
@@ -1326,6 +1339,46 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await query.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
+        elif query.data == 'meal_check':
+            user_id = get_user_id(query.from_user.id)
+            if not user_id:
+                await query.message.reply_text("Please use /start first to set up your account!")
+                return
+
+            schedule_result = supabase_client.table('constant_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('active', True)\
+                .execute()
+
+            if not schedule_result.data:
+                await query.message.reply_text("Please set up your schedule first using /start")
+                return
+
+            schedule = schedule_result.data[0]
+            meal_windows = safe_json_parse(schedule.get('meal_windows'))
+
+            if not meal_windows:
+                await query.message.reply_text("No meal reminders found yet.")
+                return
+
+            now_str = datetime.now().strftime("%H:%M")
+
+            upcoming = None
+            for meal in meal_windows:
+                if meal.get("time") and meal["time"] >= now_str:
+                    upcoming = meal
+                    break
+
+            if not upcoming:
+                upcoming = meal_windows[0]
+
+            await query.message.reply_text(
+                f"🍽️ **Next meal reminder**\n\n"
+                f"**Time:** {upcoming.get('time', '—')}\n"
+                f"{upcoming.get('message', 'Time to eat!')}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
         elif query.data == 'day_off':
             user_id = get_user_id(query.from_user.id)
             if not user_id:
@@ -1382,7 +1435,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("⚙️ **Settings**", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+            await query.edit_message_text(
+                "⚙️ **Settings**",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
 
         elif query.data == 'toggle_notifications':
             user_id = get_user_id(query.from_user.id)
@@ -1390,7 +1447,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user = supabase_client.table('users').select('notification_enabled').eq('id', user_id).execute()
                 if user.data:
                     current = user.data[0].get('notification_enabled', True)
-                    supabase_client.table('users').update({'notification_enabled': not current}).eq('id', user_id).execute()
+                    supabase_client.table('users').update({
+                        'notification_enabled': not current
+                    }).eq('id', user_id).execute()
+
                     status = "enabled" if not current else "disabled"
                     await query.edit_message_text(f"✅ Notifications {status}!")
 
@@ -1398,17 +1458,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_report_message(query.message.chat_id, query.from_user.id, context)
 
         elif query.data == 'back_main':
-            keyboard = [
-                [InlineKeyboardButton("📋 Today", callback_data='show_today')],
-                [InlineKeyboardButton("☕ Can I drink coffee now?", callback_data='caffeine_check')],
-                [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
-                [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
-                [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 "Welcome back! What would you like to do?",
-                reply_markup=reply_markup
+                reply_markup=build_main_menu()
             )
 
         elif query.data == 'resume_tomorrow':
@@ -1544,7 +1596,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in callback handler: {e}")
         logger.error(traceback.format_exc())
         await query.edit_message_text("Sorry, something went wrong.")
-
 # ==================== MAIN FUNCTION ====================
 
 def main():
@@ -1563,7 +1614,7 @@ def main():
         
         # Create conversation handler for onboarding
         conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(shift_type_handler, pattern='^shift_')],
+            entry_points=[CallbackQueryHandler(shift_type_handler, pattern='^(shift_constant|shift_rotating|learn_more)$')]
             states={
                 AWAITING_CONSTANT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_constant_schedule)],
                 AWAITING_ROTATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_rotating_schedule)],
