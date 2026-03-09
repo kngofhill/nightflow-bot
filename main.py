@@ -102,16 +102,34 @@ def get_user_settings(telegram_id: int) -> Optional[Dict]:
         return None
 
 def time_to_str(t: Union[time, str]) -> str:
-    """Convert time to HH:MM string"""
+    """Convert time or time-like string to HH:MM string."""
     if isinstance(t, time):
         return t.strftime("%H:%M")
+
+    if isinstance(t, str):
+        parsed = str_to_time(t)
+        if parsed:
+            return parsed.strftime("%H:%M")
+        return t
+
     return str(t)
 
 def str_to_time(time_str: str) -> Optional[time]:
-    """Convert HH:MM string to time object"""
+    """Convert HH:MM or HH:MM:SS string to time object."""
     try:
-        return datetime.strptime(time_str.strip(), "%H:%M").time()
-    except:
+        if not time_str:
+            return None
+
+        value = str(time_str).strip()
+
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                return datetime.strptime(value, fmt).time()
+            except ValueError:
+                continue
+
+        return None
+    except Exception:
         return None
 
 def safe_json_parse(data: Any) -> Any:
@@ -843,64 +861,56 @@ async def send_schedule_message(chat_id: int, telegram_user_id: int, context: Co
         await context.bot.send_message(chat_id=chat_id, text="Sorry, couldn't fetch your schedule.")
 
 
-async def send_report_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Send weekly report to a chat."""
+async def send_schedule_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Send today's schedule to a chat."""
     try:
         user_id = get_user_id(telegram_user_id)
         if not user_id:
-            await context.bot.send_message(chat_id=chat_id, text="Please use /start first!")
+            await context.bot.send_message(chat_id=chat_id, text="Please use /start first to set up your account!")
             return
 
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=7)
+        today = datetime.now().date()
 
-        schedules = supabase_client.table('daily_schedules').select('*')\
+        schedule_result = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
-            .gte('date', str(start_date))\
-            .lte('date', str(end_date))\
+            .eq('date', str(today))\
             .execute()
 
-        if not schedules.data:
-            await context.bot.send_message(chat_id=chat_id, text="Not enough data for a report yet. Check back in a week!")
+        if schedule_result.data:
+            s = schedule_result.data[0]
+            custom_text = "⚠️ Custom schedule" if s.get('is_custom', False) else "✅ Optimized schedule"
+
+            msg = (
+                f"📅 **Today's Schedule** ({today})\n\n"
+                f"**Shift:** {s.get('shift_type', 'unknown').title() if s.get('shift_type') else 'Unknown'}\n"
+                f"**Work:** {time_to_str(s.get('work_start', '--'))} - {time_to_str(s.get('work_end', '--'))}\n"
+                f"**Sleep:** {time_to_str(s.get('sleep_start', '--'))} - {time_to_str(s.get('sleep_end', '--'))}\n\n"
+                f"{custom_text}"
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
             return
 
-        total_days = len(schedules.data)
-        work_days = sum(1 for s in schedules.data if s.get('shift_type') != 'off')
-        off_days = total_days - work_days
-        consistent_days = sum(1 for s in schedules.data if not s.get('is_custom', False))
-        consistency_score = (consistent_days / total_days * 100) if total_days > 0 else 0
+        const_result = supabase_client.table('constant_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .eq('active', True)\
+            .execute()
 
-        night_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'night')
-        day_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'day')
-        evening_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'evening')
-
-        report = (
-            f"📊 **Weekly Report**\n"
-            f"{start_date} to {end_date}\n\n"
-            f"**Overview:**\n"
-            f"• Total days: {total_days}\n"
-            f"• Work days: {work_days}\n"
-            f"• Days off: {off_days}\n\n"
-            f"**Shift Breakdown:**\n"
-            f"• Night shifts: {night_shifts}\n"
-            f"• Day shifts: {day_shifts}\n"
-            f"• Evening shifts: {evening_shifts}\n\n"
-            f"**Consistency:** {consistency_score:.1f}%\n\n"
-        )
-
-        if consistency_score < 50:
-            report += "⚠️ Your schedule has been irregular. Use /change to get transition help."
-        elif consistency_score < 80:
-            report += "👍 Pretty consistent! A few adjustments could help."
+        if const_result.data:
+            s = const_result.data[0]
+            msg = (
+                f"📅 **Today's Schedule** (from your constant schedule)\n\n"
+                f"**Work:** {time_to_str(s['work_start'])} - {time_to_str(s['work_end'])}\n"
+                f"**Sleep:** {time_to_str(s['sleep_start'])} - {time_to_str(s['sleep_end'])}\n\n"
+                f"Use /change to modify if needed."
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
         else:
-            report += "🌟 Excellent consistency! Your body thanks you."
-
-        await context.bot.send_message(chat_id=chat_id, text=report, parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=chat_id, text="No schedule found. Please use /start to set up your schedule.")
 
     except Exception as e:
-        logger.error(f"Error in send_report_message: {e}")
+        logger.error(f"Error in send_schedule_message: {e}")
         logger.error(traceback.format_exc())
-        await context.bot.send_message(chat_id=chat_id, text="Sorry, couldn't generate report.")
+        await context.bot.send_message(chat_id=chat_id, text="Sorry, couldn't fetch your schedule.")
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show today's schedule."""
     await send_schedule_message(update.effective_chat.id, update.effective_user.id, context)
