@@ -1614,7 +1614,7 @@ def main():
         
         # Create conversation handler for onboarding
         conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(shift_type_handler, pattern='^(shift_constant|shift_rotating|learn_more)$')]
+            entry_points=[CallbackQueryHandler(shift_type_handler, pattern='^(shift_constant|shift_rotating|learn_more)$')],
             states={
                 AWAITING_CONSTANT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_constant_schedule)],
                 AWAITING_ROTATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_rotating_schedule)],
