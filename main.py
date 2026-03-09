@@ -1,43 +1,48 @@
 import os
 import logging
+import asyncio
 from datetime import datetime, time, timedelta, date
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
-    MessageHandler, filters, ContextTypes, ConversationHandler
+    MessageHandler, filters, ContextTypes, ConversationHandler, JobQueue
 )
+from telegram.constants import ParseMode
 import supabase
-import os
 from flask import Flask
 import threading
+import json
+from typing import Dict, Any, Optional, List
+import random
 
-# Add this - it keeps Render happy
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_web():
-    app.run(host='0.0.0.0', port=os.getenv('PORT', 8080))
-
-# Start web server in background
-threading.Thread(target=run_web, daemon=True).start()
-
-# Rest of your bot code continues here...
 # Load environment variables
 load_dotenv()
 
-# Setup logging with more detail for production
+# Setup logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Add this for production - log when bot starts
-logger.info("Starting Nightflow Bot...")
+# Flask web server for Render/Railway
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Nightflow Bot is running!"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+def run_web():
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Start web server in background
+threading.Thread(target=run_web, daemon=True).start()
 
 # Initialize Supabase
 supabase_url = os.getenv('SUPABASE_URL')
@@ -45,7 +50,406 @@ supabase_key = os.getenv('SUPABASE_KEY')
 supabase_client = supabase.create_client(supabase_url, supabase_key)
 
 # Conversation states
-AWAITING_CONSTANT, AWAITING_ROTATING = range(2)
+AWAITING_CONSTANT, AWAITING_ROTATING, AWAING_CUSTOM_SLEEP, AWAITING_SHIFT_CHANGE = range(4)
+
+# ==================== HELPER FUNCTIONS ====================
+
+def get_user_id(telegram_id: int) -> Optional[str]:
+    """Get internal user ID from telegram ID"""
+    try:
+        result = supabase_client.table('users').select('id').eq('telegram_id', telegram_id).execute()
+        if result.data:
+            return result.data[0]['id']
+        return None
+    except Exception as e:
+        logger.error(f"Error getting user ID: {e}")
+        return None
+
+def get_user_settings(telegram_id: int) -> Optional[Dict]:
+    """Get user settings including schedule"""
+    try:
+        user_id = get_user_id(telegram_id)
+        if not user_id:
+            return None
+        
+        # Get user
+        user_result = supabase_client.table('users').select('*').eq('id', user_id).execute()
+        if not user_result.data:
+            return None
+        
+        user = user_result.data[0]
+        
+        # Get active schedule
+        schedule_result = supabase_client.table('constant_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .eq('active', True)\
+            .execute()
+        
+        if schedule_result.data:
+            user['schedule'] = schedule_result.data[0]
+        
+        return user
+    except Exception as e:
+        logger.error(f"Error getting user settings: {e}")
+        return None
+
+def time_to_str(t: time) -> str:
+    """Convert time to HH:MM string"""
+    return t.strftime("%H:%M")
+
+def str_to_time(time_str: str) -> Optional[time]:
+    """Convert HH:MM string to time object"""
+    try:
+        return datetime.strptime(time_str.strip(), "%H:%M").time()
+    except:
+        return None
+
+def calculate_optimal_schedule(work_start: time, work_end: time) -> Dict:
+    """Calculate optimal sleep, coffee, meal, and brightness times"""
+    
+    # Convert to datetime for calculations
+    today = date.today()
+    work_start_dt = datetime.combine(today, work_start)
+    work_end_dt = datetime.combine(today, work_end)
+    
+    # If work end is before work start, it's next day
+    if work_end_dt <= work_start_dt:
+        work_end_dt += timedelta(days=1)
+    
+    # Determine shift type
+    if work_start.hour >= 20 or work_start.hour <= 4:
+        shift_type = 'night'
+    elif work_start.hour >= 12 and work_start.hour < 20:
+        shift_type = 'evening'
+    else:
+        shift_type = 'day'
+    
+    # Calculate sleep times based on shift type
+    if shift_type == 'night':
+        # Night shift: sleep right after work
+        sleep_start = work_end_dt.time()
+        # Wake up 1.5 hours before shift
+        wake_dt = work_start_dt - timedelta(hours=1, minutes=30)
+        sleep_end = wake_dt.time()
+    elif shift_type == 'evening':
+        # Evening shift: sleep before shift
+        sleep_start = time(2, 0)  # 2 AM
+        sleep_end = time(10, 0)    # 10 AM
+    else:
+        # Day shift: normal sleep
+        sleep_start = time(22, 0)  # 10 PM
+        sleep_end = time(6, 0)      # 6 AM
+    
+    # Calculate caffeine windows
+    coffee_windows = []
+    
+    # Pre-work coffee (30 min before)
+    pre_work_coffee = work_start_dt - timedelta(minutes=30)
+    coffee_windows.append({
+        "time": pre_work_coffee.strftime("%H:%M"),
+        "message": "☕ Pre-shift coffee. Perfect timing to start alert.",
+        "type": "pre_work"
+    })
+    
+    # Mid-shift coffee (3-4 hours in)
+    mid_coffee = work_start_dt + timedelta(hours=3, minutes=30)
+    coffee_windows.append({
+        "time": mid_coffee.strftime("%H:%M"),
+        "message": "☕ Mid-shift boost. You're halfway there.",
+        "type": "mid_shift"
+    })
+    
+    # Calculate meal windows
+    meal_windows = []
+    
+    # Pre-work meal (1.5 hours before)
+    pre_meal = work_start_dt - timedelta(hours=1, minutes=30)
+    meal_windows.append({
+        "time": pre_meal.strftime("%H:%M"),
+        "message": "🍽️ Pre-shift meal. Protein + complex carbs for steady energy.",
+        "type": "pre_work"
+    })
+    
+    # Mid-shift meal (4 hours in)
+    mid_meal = work_start_dt + timedelta(hours=4)
+    meal_windows.append({
+        "time": mid_meal.strftime("%H:%M"),
+        "message": "🥗 Mid-shift fuel. Avoid heavy/greasy food.",
+        "type": "mid_shift"
+    })
+    
+    # Post-shift snack (light)
+    post_meal = work_end_dt
+    meal_windows.append({
+        "time": post_meal.strftime("%H:%M"),
+        "message": "🍌 Post-shift snack. Light before sleep. Banana is perfect.",
+        "type": "post_work"
+    })
+    
+    # Calculate brightness windows
+    brightness_windows = []
+    
+    # Pre-work: bright light exposure
+    pre_bright = work_start_dt - timedelta(minutes=15)
+    brightness_windows.append({
+        "time": pre_bright.strftime("%H:%M"),
+        "message": "☀️ Bright light time. Tell your brain: wake up!",
+        "type": "bright",
+        "action": "increase_light"
+    })
+    
+    # 2 hours before sleep: dim lights
+    sleep_start_dt = datetime.combine(today, sleep_start)
+    if sleep_start_dt <= work_end_dt and shift_type == 'night':
+        sleep_start_dt += timedelta(days=1)
+    
+    dim_time = sleep_start_dt - timedelta(hours=2)
+    brightness_windows.append({
+        "time": dim_time.strftime("%H:%M"),
+        "message": "🌙 Time to dim lights. Tell your brain: sleep is coming.",
+        "type": "dim",
+        "action": "dim_lights"
+    })
+    
+    # 30 min before sleep: no screens
+    no_screens = sleep_start_dt - timedelta(minutes=30)
+    brightness_windows.append({
+        "time": no_screens.strftime("%H:%M"),
+        "message": "📵 30 min until sleep. Put devices away. Read a book.",
+        "type": "no_screens",
+        "action": "no_screens"
+    })
+    
+    # Post-work light management (for night shifts)
+    if shift_type == 'night':
+        commute_time = work_end_dt + timedelta(minutes=30)
+        brightness_windows.append({
+            "time": commute_time.strftime("%H:%M"),
+            "message": "🕶️ On the way home? Wear sunglasses. Blue light blockers help.",
+            "type": "blue_block",
+            "action": "wear_sunglasses"
+        })
+    
+    return {
+        "sleep_start": time_to_str(sleep_start),
+        "sleep_end": time_to_str(sleep_end),
+        "coffee_windows": coffee_windows,
+        "meal_windows": meal_windows,
+        "brightness_windows": brightness_windows,
+        "shift_type": shift_type
+    }
+
+def is_within_caffeine_window(sleep_end: time, current_time: time) -> bool:
+    """Check if current time is within 6 hours of sleep"""
+    sleep_end_dt = datetime.combine(date.today(), sleep_end)
+    current_dt = datetime.combine(date.today(), current_time)
+    
+    # If sleep end is before current, it's next day
+    if sleep_end_dt <= current_dt:
+        sleep_end_dt += timedelta(days=1)
+    
+    cutoff = sleep_end_dt - timedelta(hours=6)
+    return current_dt >= cutoff
+
+def generate_transition_advice(old_work_start: time, old_work_end: time, 
+                               new_work_start: time, new_work_end: time,
+                               days_until_change: int) -> str:
+    """Generate advice for transitioning between shift patterns"""
+    
+    # Calculate shift difference
+    old_start_dt = datetime.combine(date.today(), old_work_start)
+    new_start_dt = datetime.combine(date.today(), new_work_start)
+    
+    if new_start_dt <= old_start_dt:
+        new_start_dt += timedelta(days=1)
+    
+    hours_diff = (new_start_dt - old_start_dt).total_seconds() / 3600
+    
+    advice = f"🔄 **Shift Change Preparation**\n\n"
+    advice += f"Moving from {time_to_str(old_work_start)}-{time_to_str(old_work_end)} "
+    advice += f"to {time_to_str(new_work_start)}-{time_to_str(new_work_end)}\n\n"
+    
+    if hours_diff > 0:
+        advice += f"Your new shift starts {hours_diff:.1f} hours later.\n\n"
+        
+        if hours_diff <= 3:
+            advice += "✅ Small adjustment. Stay up a bit later each night."
+        elif hours_diff <= 6:
+            advice += "⚡ Medium shift. Consider a split sleep schedule:\n"
+            advice += "• Nap 3-4 hours before first new shift\n"
+            advice += "• Then sleep 4-5 hours after shift"
+        else:
+            advice += "⚠️ Large shift change. This will take a few days to adjust:\n"
+            advice += "• Day 1: Stay up 2 hours later than usual\n"
+            advice += "• Day 2: Stay up 4 hours later\n"
+            advice += "• Day 3: Full adjustment"
+    else:
+        advice += f"Your new shift starts {abs(hours_diff):.1f} hours earlier.\n\n"
+        advice += "Early transition strategy:\n"
+        advice += "• Go to bed earlier each night\n"
+        advice += "• Get bright light exposure immediately upon waking\n"
+        advice += "• Avoid caffeine 6 hours before new bedtime"
+    
+    advice += "\n\nI'll send you daily transition reminders."
+    
+    return advice
+
+# ==================== NOTIFICATION FUNCTIONS ====================
+
+async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str, notification_type: str):
+    """Send notification to user and log it"""
+    try:
+        # Get telegram ID from user ID
+        result = supabase_client.table('users').select('telegram_id').eq('id', user_id).execute()
+        if not result.data:
+            return
+        
+        telegram_id = result.data[0]['telegram_id']
+        
+        # Send message
+        await context.bot.send_message(chat_id=telegram_id, text=message)
+        
+        # Log notification
+        supabase_client.table('notifications').insert({
+            'user_id': user_id,
+            'type': notification_type,
+            'scheduled_time': datetime.now().isoformat(),
+            'sent': True,
+            'message': message
+        }).execute()
+        
+        logger.info(f"Sent {notification_type} notification to user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Error sending notification: {e}")
+
+async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
+    """Job to check and send scheduled notifications"""
+    try:
+        now = datetime.now()
+        current_time = now.time()
+        current_hour_min = current_time.strftime("%H:%M")
+        
+        # Get all users with active schedules
+        users_result = supabase_client.table('users').select('id').eq('notification_enabled', True).execute()
+        
+        for user in users_result.data:
+            user_id = user['id']
+            
+            # Get user's schedule
+            schedule_result = supabase_client.table('constant_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('active', True)\
+                .execute()
+            
+            if not schedule_result.data:
+                continue
+            
+            schedule = schedule_result.data[0]
+            
+            # Check coffee windows
+            if schedule.get('coffee_windows'):
+                coffee_windows = json.loads(schedule['coffee_windows']) if isinstance(schedule['coffee_windows'], str) else schedule['coffee_windows']
+                for window in coffee_windows:
+                    if window['time'] == current_hour_min:
+                        await send_notification(context, user_id, window['message'], 'coffee')
+            
+            # Check meal windows
+            if schedule.get('meal_windows'):
+                meal_windows = json.loads(schedule['meal_windows']) if isinstance(schedule['meal_windows'], str) else schedule['meal_windows']
+                for window in meal_windows:
+                    if window['time'] == current_hour_min:
+                        await send_notification(context, user_id, window['message'], 'meal')
+            
+            # Check brightness windows
+            if schedule.get('brightness_windows'):
+                brightness_windows = json.loads(schedule['brightness_windows']) if isinstance(schedule['brightness_windows'], str) else schedule['brightness_windows']
+                for window in brightness_windows:
+                    if window['time'] == current_hour_min:
+                        await send_notification(context, user_id, window['message'], 'brightness')
+            
+            # Check sleep reminders
+            if schedule.get('sleep_start'):
+                # Sleep reminder 30 min before
+                sleep_start = str_to_time(schedule['sleep_start'])
+                if sleep_start:
+                    sleep_dt = datetime.combine(now.date(), sleep_start)
+                    reminder_dt = sleep_dt - timedelta(minutes=30)
+                    if reminder_dt.time().strftime("%H:%M") == current_hour_min:
+                        await send_notification(
+                            context, user_id, 
+                            f"😴 30 minutes until sleep time ({schedule['sleep_start']}). Start winding down.", 
+                            'sleep'
+                        )
+        
+    except Exception as e:
+        logger.error(f"Error in scheduled notifications: {e}")
+
+async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /caffeine command - check if coffee is safe now"""
+    try:
+        user_id = get_user_id(update.effective_user.id)
+        if not user_id:
+            await update.message.reply_text("Please use /start first to set up your account!")
+            return
+        
+        # Get user's schedule
+        schedule_result = supabase_client.table('constant_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .eq('active', True)\
+            .execute()
+        
+        if not schedule_result.data:
+            await update.message.reply_text("Please set up your schedule first using /start")
+            return
+        
+        schedule = schedule_result.data[0]
+        sleep_end = str_to_time(schedule['sleep_end'])
+        
+        if not sleep_end:
+            await update.message.reply_text("Sleep schedule not configured properly.")
+            return
+        
+        now = datetime.now().time()
+        
+        if is_within_caffeine_window(sleep_end, now):
+            # Calculate time until cutoff
+            sleep_end_dt = datetime.combine(date.today(), sleep_end)
+            now_dt = datetime.combine(date.today(), now)
+            
+            if sleep_end_dt <= now_dt:
+                sleep_end_dt += timedelta(days=1)
+            
+            cutoff_dt = sleep_end_dt - timedelta(hours=6)
+            minutes_left = int((cutoff_dt - now_dt).total_seconds() / 60)
+            
+            if minutes_left > 0:
+                await update.message.reply_text(
+                    f"⚠️ **Caffeine Warning**\n\n"
+                    f"You have {minutes_left} minutes left for caffeine today.\n"
+                    f"After {cutoff_dt.strftime('%H:%M')}, caffeine will disrupt your sleep.\n\n"
+                    f"Last call: {cutoff_dt.strftime('%H:%M')}"
+                )
+            else:
+                await update.message.reply_text(
+                    f"🚫 **Caffeine window closed**\n\n"
+                    f"You're within 6 hours of your sleep time ({schedule['sleep_end']}).\n"
+                    f"Coffee now will make falling asleep harder.\n"
+                    f"Try herbal tea or water instead."
+                )
+        else:
+            await update.message.reply_text(
+                f"✅ **Safe for caffeine**\n\n"
+                f"You're outside the 6-hour sleep window.\n"
+                f"Enjoy your coffee! Remember: last call is "
+                f"{(datetime.combine(date.today(), sleep_end) - timedelta(hours=6)).strftime('%H:%M')}"
+            )
+            
+    except Exception as e:
+        logger.error(f"Error in caffeine_advice: {e}")
+        await update.message.reply_text("Sorry, couldn't check caffeine safety.")
+
+# ==================== COMMAND HANDLERS ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
@@ -59,24 +463,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # New user - start onboarding
             keyboard = [
                 [InlineKeyboardButton("Constant Schedule", callback_data='shift_constant')],
-                [InlineKeyboardButton("Rotating Schedule", callback_data='shift_rotating')]
+                [InlineKeyboardButton("Rotating Schedule", callback_data='shift_rotating')],
+                [InlineKeyboardButton("Learn More First", callback_data='learn_more')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            welcome_msg = (
+                f"🌙 **Welcome to Nightflow, {user.first_name}!**\n\n"
+                f"I'm your personal night shift companion. I'll help you:\n"
+                f"• Optimize your sleep schedule\n"
+                f"• Time your caffeine perfectly\n"
+                f"• Remember to eat and hydrate\n"
+                f"• Manage light exposure\n"
+                f"• Adapt to shift changes\n\n"
+                f"First, tell me about your shift pattern:"
+            )
+            
+            await update.message.reply_text(welcome_msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("Today's Schedule", callback_data='show_schedule')],
+                [InlineKeyboardButton("Caffeine Check", callback_data='caffeine_check')],
+                [InlineKeyboardButton("Day Off", callback_data='day_off')],
+                [InlineKeyboardButton("Settings", callback_data='settings')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                f"🌙 Welcome to Nightflow, {user.first_name}!\n\n"
-                "I'll help you optimize your shift work schedule. "
-                "First, tell me about your shift pattern:",
+                f"Welcome back, {user.first_name}! What would you like to do?",
                 reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(
-                "Welcome back! Use /schedule to see today's plan.\n"
-                "Commands:\n"
-                "/schedule - View today's schedule\n"
-                "/dayoff - Take a day off\n"
-                "/adjust - Adjust your schedule\n"
-                "/report - View weekly report"
             )
     except Exception as e:
         logger.error(f"Error in start: {e}")
@@ -89,6 +504,21 @@ async def shift_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         user_id = update.effective_user.id
+        
+        if query.data == 'learn_more':
+            await query.edit_message_text(
+                "🌙 **About Nightflow**\n\n"
+                "Nightflow is designed specifically for night shift workers.\n\n"
+                "**Key features:**\n"
+                "• **Sleep optimization** - When to sleep for maximum rest\n"
+                "• **Caffeine timing** - Never drink coffee at the wrong time again\n"
+                "• **Meal reminders** - Stay fueled without the crash\n"
+                "• **Light management** - Train your body when to be awake\n"
+                "• **Shift transitions** - Adapt smoothly to schedule changes\n\n"
+                "Ready to set up? Use /start again and choose your schedule type."
+            )
+            return
+        
         shift_type = 'constant' if 'constant' in query.data else 'rotating'
         
         # Save user to database
@@ -101,20 +531,29 @@ async def shift_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if shift_type == 'constant':
             await query.edit_message_text(
-                "Great! Let's set up your constant schedule.\n\n"
-                "Please enter your typical work hours (format: HH:MM-HH:MM)\n"
-                "Example for night shift: 22:00-06:00\n"
-                "Example for day shift: 09:00-17:00"
+                "✅ **Constant Schedule Selected**\n\n"
+                "Please enter your typical work hours in this format:\n"
+                "`HH:MM-HH:MM`\n\n"
+                "Examples:\n"
+                "• Night shift: `22:00-06:00`\n"
+                "• Day shift: `09:00-17:00`\n"
+                "• Evening shift: `16:00-00:00`\n\n"
+                "Reply with your hours:",
+                parse_mode=ParseMode.MARKDOWN
             )
             return AWAITING_CONSTANT
         else:
             await query.edit_message_text(
-                "Let's set up your rotating schedule.\n\n"
-                "Please describe your rotation pattern.\n"
-                "Example: '2 days, 2 nights, 4 off'\n"
-                "Or: 'Dupont schedule'"
+                "🔄 **Rotating Schedule Selected**\n\n"
+                "Please describe your rotation pattern.\n\n"
+                "Examples:\n"
+                "• `2 days, 2 nights, 4 off`\n"
+                "• `Dupont schedule` (12-hour shifts)\n"
+                "• `Week of nights, week of days`\n\n"
+                "Reply with your pattern:"
             )
             return AWAITING_ROTATING
+            
     except Exception as e:
         logger.error(f"Error in shift_type_handler: {e}")
         await query.edit_message_text("Sorry, something went wrong. Please try /start again.")
@@ -124,11 +563,14 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
     """Save constant schedule"""
     try:
         # Parse work hours
-        work_hours = update.message.text.strip()
+        work_hours = update.message.text.strip().replace(" ", "")
         start_str, end_str = work_hours.split('-')
         
-        work_start = datetime.strptime(start_str.strip(), "%H:%M").time()
-        work_end = datetime.strptime(end_str.strip(), "%H:%M").time()
+        work_start = str_to_time(start_str)
+        work_end = str_to_time(end_str)
+        
+        if not work_start or not work_end:
+            raise ValueError("Invalid time format")
         
         # Get user
         user_result = supabase_client.table('users').select('id').eq('telegram_id', update.effective_user.id).execute()
@@ -139,65 +581,66 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
         user_id = user_result.data[0]['id']
         
         # Calculate optimal schedule
-        optimized = optimize_schedule(work_start, work_end)
+        optimized = calculate_optimal_schedule(work_start, work_end)
         
         # Save to database
         supabase_client.table('constant_schedules').insert({
             'user_id': user_id,
-            'work_start': str(work_start),
-            'work_end': str(work_end),
-            'sleep_start': str(optimized['sleep_start']),
-            'sleep_end': str(optimized['sleep_end']),
-            'coffee_windows': optimized['coffee_windows'],
-            'meal_windows': optimized['meal_windows'],
-            'brightness_windows': optimized['brightness_windows'],
+            'work_start': time_to_str(work_start),
+            'work_end': time_to_str(work_end),
+            'sleep_start': optimized['sleep_start'],
+            'sleep_end': optimized['sleep_end'],
+            'coffee_windows': json.dumps(optimized['coffee_windows']),
+            'meal_windows': json.dumps(optimized['meal_windows']),
+            'brightness_windows': json.dumps(optimized['brightness_windows']),
+            'shift_type': optimized['shift_type'],
             'active': True
         }).execute()
         
         # Generate daily schedule for today
         today = datetime.now().date()
         
-        # Determine shift type
-        if work_start.hour >= 20 or work_start.hour <= 5:
-            shift_type = 'night'
-        elif work_start.hour >= 12 and work_start.hour < 20:
-            shift_type = 'evening'
-        else:
-            shift_type = 'day'
-        
         supabase_client.table('daily_schedules').insert({
             'user_id': user_id,
             'date': str(today),
-            'shift_type': shift_type,
-            'work_start': str(work_start),
-            'work_end': str(work_end),
-            'sleep_start': str(optimized['sleep_start']),
-            'sleep_end': str(optimized['sleep_end']),
+            'shift_type': optimized['shift_type'],
+            'work_start': time_to_str(work_start),
+            'work_end': time_to_str(work_end),
+            'sleep_start': optimized['sleep_start'],
+            'sleep_end': optimized['sleep_end'],
             'is_custom': False
         }).execute()
         
-        # Format coffee times for display
-        coffee_times = [c['start'] for c in optimized['coffee_windows']]
-        meal_times = [m['start'] for m in optimized['meal_windows']]
+        # Format schedule for display
+        coffee_times = [c['time'] for c in optimized['coffee_windows']]
+        meal_times = [m['time'] for m in optimized['meal_windows']]
+        brightness_times = [b['time'] for b in optimized['brightness_windows']]
         
-        # Show schedule to user
         schedule_msg = (
-            f"✅ Your optimized schedule is ready!\n\n"
-            f"Work: {work_start.strftime('%H:%M')} - {work_end.strftime('%H:%M')}\n"
-            f"Sleep: {optimized['sleep_start'].strftime('%H:%M')} - {optimized['sleep_end'].strftime('%H:%M')}\n\n"
-            f"Coffee times: {', '.join(coffee_times)}\n"
-            f"Meal times: {', '.join(meal_times)}\n\n"
-            f"I'll notify you before each important time!\n"
-            f"Use /dayoff if you need a break."
+            f"✅ **Your optimized schedule is ready!**\n\n"
+            f"**Work:** {time_to_str(work_start)} - {time_to_str(work_end)} ({optimized['shift_type']} shift)\n"
+            f"**Sleep:** {optimized['sleep_start']} - {optimized['sleep_end']}\n\n"
+            f"**Coffee times:** {', '.join(coffee_times)}\n"
+            f"**Meal times:** {', '.join(meal_times)}\n"
+            f"**Light reminders:** {', '.join(brightness_times)}\n\n"
+            f"I'll notify you before each important time!\n\n"
+            f"**Commands:**\n"
+            f"/schedule - View today's schedule\n"
+            f"/caffeine - Check if coffee is safe now\n"
+            f"/dayoff - Take a day off\n"
+            f"/change - Adjust for shift changes\n"
+            f"/report - View weekly report"
         )
         
-        await update.message.reply_text(schedule_msg)
+        await update.message.reply_text(schedule_msg, parse_mode=ParseMode.MARKDOWN)
         
     except ValueError as e:
         logger.error(f"Value error in save_constant_schedule: {e}")
         await update.message.reply_text(
-            "Sorry, I couldn't understand that format. Please use HH:MM-HH:MM\n"
-            "Example: 22:00-06:00"
+            "❌ I couldn't understand that format.\n\n"
+            "Please use `HH:MM-HH:MM`\n"
+            "Example: `22:00-06:00`",
+            parse_mode=ParseMode.MARKDOWN
         )
         return AWAITING_CONSTANT
     except Exception as e:
@@ -225,14 +668,15 @@ async def save_rotating_schedule(update: Update, context: ContextTypes.DEFAULT_T
             'user_id': user_id,
             'pattern_name': 'custom',
             'cycle_days': 7,
-            'shifts': {'description': pattern}
+            'shifts': json.dumps({'description': pattern})
         }).execute()
         
         await update.message.reply_text(
-            f"✅ Rotating schedule saved!\n\n"
+            f"✅ **Rotating schedule saved!**\n\n"
             f"Pattern: {pattern}\n\n"
             f"I'll help you optimize your transitions between shifts.\n"
-            f"Use /schedule to see today's plan."
+            f"Use /schedule to see today's plan.\n\n"
+            f"**Note:** For rotating schedules, you'll need to update me when your pattern changes."
         )
         
     except Exception as e:
@@ -241,64 +685,14 @@ async def save_rotating_schedule(update: Update, context: ContextTypes.DEFAULT_T
     
     return ConversationHandler.END
 
-def optimize_schedule(work_start, work_end):
-    """Optimize sleep and activity times"""
-    
-    # Convert to datetime for calculations
-    work_start_dt = datetime.combine(datetime.today(), work_start)
-    work_end_dt = datetime.combine(datetime.today(), work_end)
-    
-    # If work end is before work start, it's next day
-    if work_end_dt <= work_start_dt:
-        work_end_dt += timedelta(days=1)
-    
-    # Calculate optimal sleep
-    if work_start.hour >= 20 or work_start.hour <= 5:  # Night shift
-        # Sleep right after work
-        sleep_start = work_end_dt.time()
-        # Wake up 1 hour before work
-        wake_time = work_start_dt - timedelta(hours=1)
-        sleep_end = wake_time.time()
-    else:  # Day shift
-        sleep_start = time(22, 0)  # 10 PM
-        sleep_end = time(6, 0)     # 6 AM
-    
-    # Coffee windows (formatted as strings)
-    coffee_windows = [
-        {"start": (work_start_dt - timedelta(minutes=30)).strftime("%H:%M"), "type": "pre_work"},
-        {"start": (work_start_dt + timedelta(hours=4)).strftime("%H:%M"), "type": "mid_shift"}
-    ]
-    
-    # Meal windows
-    meal_windows = [
-        {"start": (work_start_dt - timedelta(hours=1)).strftime("%H:%M"), "type": "pre_work"},
-        {"start": (work_start_dt + timedelta(hours=6)).strftime("%H:%M"), "type": "post_work"}
-    ]
-    
-    # Brightness windows
-    brightness_windows = [
-        {"start": (work_start_dt - timedelta(hours=1)).strftime("%H:%M"), "level": "high"},
-        {"start": (work_start_dt + timedelta(hours=8)).strftime("%H:%M"), "level": "low"}
-    ]
-    
-    return {
-        "sleep_start": sleep_start,
-        "sleep_end": sleep_end,
-        "coffee_windows": coffee_windows,
-        "meal_windows": meal_windows,
-        "brightness_windows": brightness_windows
-    }
-
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show today's schedule"""
     try:
-        # Get user
-        user_result = supabase_client.table('users').select('id').eq('telegram_id', update.effective_user.id).execute()
-        if not user_result.data:
+        user_id = get_user_id(update.effective_user.id)
+        if not user_id:
             await update.message.reply_text("Please use /start first to set up your account!")
             return
         
-        user_id = user_result.data[0]['id']
         today = datetime.now().date()
         
         # Get today's schedule
@@ -312,14 +706,14 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             custom_text = "⚠️ Custom schedule" if s.get('is_custom', False) else "✅ Optimized schedule"
             
             msg = (
-                f"📅 Today's Schedule ({today})\n\n"
-                f"Shift: {s['shift_type'].title()}\n"
-                f"Work: {s['work_start']} - {s['work_end']}\n"
-                f"Sleep: {s['sleep_start']} - {s['sleep_end']}\n\n"
+                f"📅 **Today's Schedule** ({today})\n\n"
+                f"**Shift:** {s.get('shift_type', 'unknown').title()}\n"
+                f"**Work:** {s.get('work_start', '--')} - {s.get('work_end', '--')}\n"
+                f"**Sleep:** {s.get('sleep_start', '--')} - {s.get('sleep_end', '--')}\n\n"
                 f"{custom_text}"
             )
             
-            await update.message.reply_text(msg)
+            await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
         else:
             # Try to get constant schedule and generate for today
             const_result = supabase_client.table('constant_schedules').select('*')\
@@ -330,12 +724,12 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if const_result.data:
                 s = const_result.data[0]
                 msg = (
-                    f"📅 Today's Schedule (from your constant schedule)\n\n"
-                    f"Work: {s['work_start']} - {s['work_end']}\n"
-                    f"Sleep: {s['sleep_start']} - {s['sleep_end']}\n\n"
+                    f"📅 **Today's Schedule** (from your constant schedule)\n\n"
+                    f"**Work:** {s['work_start']} - {s['work_end']}\n"
+                    f"**Sleep:** {s['sleep_start']} - {s['sleep_end']}\n\n"
                     f"Use /adjust to modify if needed."
                 )
-                await update.message.reply_text(msg)
+                await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
             else:
                 msg = "No schedule found. Please use /start to set up your schedule."
                 await update.message.reply_text(msg)
@@ -347,13 +741,11 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def dayoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle day off requests"""
     try:
-        # Get user
-        user_result = supabase_client.table('users').select('id').eq('telegram_id', update.effective_user.id).execute()
-        if not user_result.data:
+        user_id = get_user_id(update.effective_user.id)
+        if not user_id:
             await update.message.reply_text("Please use /start first!")
             return
         
-        user_id = user_result.data[0]['id']
         today = datetime.now().date()
         
         # Check if schedule exists for today
@@ -379,62 +771,301 @@ async def dayoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [InlineKeyboardButton("Resume Tomorrow", callback_data='resume_tomorrow')],
-            [InlineKeyboardButton("Keep Day Off", callback_data='keep_off')]
+            [InlineKeyboardButton("Keep Day Off", callback_data='keep_off')],
+            [InlineKeyboardButton("Back to Work Today", callback_data='back_to_work')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "✅ Day off noted! I've disabled notifications for today.\n"
+            "✅ **Day off noted!**\n\n"
+            "I've disabled notifications for today.\n"
             "Rest well! What would you like for tomorrow?",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
         )
         
     except Exception as e:
         logger.error(f"Error setting day off: {e}")
         await update.message.reply_text("Sorry, couldn't set day off.")
 
-async def adjust_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle adjust schedule command"""
-    await update.message.reply_text(
-        "You can adjust your schedule in the following ways:\n\n"
-        "1. To change sleep time: /sleep HH:MM-HH:MM\n"
-        "2. To add coffee time: /coffee HH:MM\n"
-        "3. To reset to optimized: /reset\n\n"
-        "Example: /sleep 23:00-07:00"
-    )
+async def change_shift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle shift change command"""
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_text(
+                "📅 **Shift Change Helper**\n\n"
+                "Use this command when your schedule changes.\n\n"
+                "**Usage:**\n"
+                "`/change HH:MM-HH:MM [days]`\n\n"
+                "**Examples:**\n"
+                "• `/change 23:00-07:00 tomorrow`\n"
+                "• `/change 20:00-04:00 in 2 days`\n"
+                "• `/change 18:00-02:00 today`\n\n"
+                "I'll give you personalized transition advice.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Parse command
+        shift_time = args[0]  # "22:00-06:00"
+        
+        # Parse days
+        days_until = 1  # default to tomorrow
+        if len(args) >= 2:
+            day_text = ' '.join(args[1:]).lower()
+            if 'today' in day_text:
+                days_until = 0
+            elif 'tomorrow' in day_text:
+                days_until = 1
+            else:
+                # Try to extract number
+                import re
+                numbers = re.findall(r'\d+', day_text)
+                if numbers:
+                    days_until = int(numbers[0])
+        
+        # Parse new shift times
+        start_str, end_str = shift_time.split('-')
+        new_start = str_to_time(start_str)
+        new_end = str_to_time(end_str)
+        
+        if not new_start or not new_end:
+            await update.message.reply_text("❌ Invalid time format. Use HH:MM-HH:MM")
+            return
+        
+        # Get current schedule
+        user_id = get_user_id(update.effective_user.id)
+        if not user_id:
+            await update.message.reply_text("Please use /start first!")
+            return
+        
+        schedule_result = supabase_client.table('constant_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .eq('active', True)\
+            .execute()
+        
+        if not schedule_result.data:
+            await update.message.reply_text("No schedule found. Use /start to set up first.")
+            return
+        
+        current = schedule_result.data[0]
+        old_start = str_to_time(current['work_start'])
+        old_end = str_to_time(current['work_end'])
+        
+        # Generate transition advice
+        advice = generate_transition_advice(
+            old_start, old_end,
+            new_start, new_end,
+            days_until
+        )
+        
+        # Ask if they want to update permanently
+        keyboard = [
+            [InlineKeyboardButton("✅ Update to New Schedule", callback_data=f"update_shift_{shift_time}")],
+            [InlineKeyboardButton("❌ Keep Current Schedule", callback_data="keep_current")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            advice + "\n\nWould you like to update your permanent schedule?",
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in change_shift: {e}")
+        await update.message.reply_text("Sorry, couldn't process shift change.")
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show weekly report"""
-    await update.message.reply_text(
-        "📊 Weekly Report Feature Coming Soon!\n\n"
-        "This will show your schedule adherence and progress."
-    )
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel conversation"""
-    await update.message.reply_text("Operation cancelled.")
-    return ConversationHandler.END
+    try:
+        user_id = get_user_id(update.effective_user.id)
+        if not user_id:
+            await update.message.reply_text("Please use /start first!")
+            return
+        
+        # Get last 7 days of schedules
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=7)
+        
+        schedules = supabase_client.table('daily_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .gte('date', str(start_date))\
+            .lte('date', str(end_date))\
+            .execute()
+        
+        if not schedules.data:
+            await update.message.reply_text("Not enough data for a report yet. Check back in a week!")
+            return
+        
+        # Calculate stats
+        total_days = len(schedules.data)
+        work_days = sum(1 for s in schedules.data if s['shift_type'] != 'off')
+        off_days = total_days - work_days
+        
+        # Calculate consistency (simplified)
+        consistent_days = sum(1 for s in schedules.data if not s.get('is_custom', False))
+        consistency_score = (consistent_days / total_days * 100) if total_days > 0 else 0
+        
+        # Get shift types
+        night_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'night')
+        day_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'day')
+        evening_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'evening')
+        
+        # Generate report
+        report = (
+            f"📊 **Weekly Report**\n"
+            f"{start_date} to {end_date}\n\n"
+            f"**Overview:**\n"
+            f"• Total days: {total_days}\n"
+            f"• Work days: {work_days}\n"
+            f"• Days off: {off_days}\n\n"
+            f"**Shift Breakdown:**\n"
+            f"• Night shifts: {night_shifts}\n"
+            f"• Day shifts: {day_shifts}\n"
+            f"• Evening shifts: {evening_shifts}\n\n"
+            f"**Consistency:** {consistency_score:.1f}%\n\n"
+        )
+        
+        if consistency_score < 50:
+            report += "⚠️ Your schedule has been irregular. Use /change to get transition help."
+        elif consistency_score < 80:
+            report += "👍 Pretty consistent! A few adjustments could help."
+        else:
+            report += "🌟 Excellent consistency! Your body thanks you."
+        
+        # Save report
+        supabase_client.table('weekly_reports').insert({
+            'user_id': user_id,
+            'week_start': str(start_date),
+            'week_end': str(end_date),
+            'adherence_score': consistency_score,
+            'data': json.dumps({
+                'work_days': work_days,
+                'off_days': off_days,
+                'night_shifts': night_shifts,
+                'day_shifts': day_shifts,
+                'evening_shifts': evening_shifts
+            })
+        }).execute()
+        
+        await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        await update.message.reply_text("Sorry, couldn't generate report.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle callback queries"""
     query = update.callback_query
     await query.answer()
     
-    if query.data == 'resume_tomorrow':
-        await query.edit_message_text("Great! I'll resume your normal schedule tomorrow.")
-    elif query.data == 'keep_off':
-        await query.edit_message_text("Okay, I'll keep today as a day off. Use /schedule to update when you're ready.")
+    try:
+        if query.data == 'show_schedule':
+            # Trigger schedule command
+            await schedule_command(update, context)
+            
+        elif query.data == 'caffeine_check':
+            # Trigger caffeine command
+            await caffeine_advice_command(update, context)
+            
+        elif query.data == 'day_off':
+            # Trigger day off
+            await dayoff_command(update, context)
+            
+        elif query.data == 'settings':
+            keyboard = [
+                [InlineKeyboardButton("🔔 Toggle Notifications", callback_data='toggle_notifications')],
+                [InlineKeyboardButton("⏰ Adjust Schedule", callback_data='adjust_schedule')],
+                [InlineKeyboardButton("📊 View Report", callback_data='view_report')],
+                [InlineKeyboardButton("🔙 Back", callback_data='back_main')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("⚙️ **Settings**", reply_markup=reply_markup)
+            
+        elif query.data == 'toggle_notifications':
+            user_id = get_user_id(update.effective_user.id)
+            if user_id:
+                # Get current setting
+                user = supabase_client.table('users').select('notification_enabled').eq('id', user_id).execute()
+                if user.data:
+                    current = user.data[0].get('notification_enabled', True)
+                    # Toggle
+                    supabase_client.table('users').update({'notification_enabled': not current}).eq('id', user_id).execute()
+                    status = "enabled" if not current else "disabled"
+                    await query.edit_message_text(f"✅ Notifications {status}!")
+            
+        elif query.data == 'resume_tomorrow':
+            await query.edit_message_text("Great! I'll resume your normal schedule tomorrow.")
+            
+        elif query.data == 'keep_off':
+            await query.edit_message_text("Okay, I'll keep today as a day off. Use /schedule to update when you're ready.")
+            
+        elif query.data == 'back_to_work':
+            # Delete today's day off
+            user_id = get_user_id(update.effective_user.id)
+            today = datetime.now().date()
+            supabase_client.table('daily_schedules').delete()\
+                .eq('user_id', user_id)\
+                .eq('date', str(today))\
+                .execute()
+            await query.edit_message_text("✅ Back to work! I've restored your regular schedule.")
+            
+        elif query.data.startswith('update_shift_'):
+            # Extract new shift times
+            shift_time = query.data.replace('update_shift_', '')
+            start_str, end_str = shift_time.split('-')
+            
+            user_id = get_user_id(update.effective_user.id)
+            
+            # Calculate new optimal schedule
+            work_start = str_to_time(start_str)
+            work_end = str_to_time(end_str)
+            optimized = calculate_optimal_schedule(work_start, work_end)
+            
+            # Update database
+            supabase_client.table('constant_schedules').update({
+                'work_start': time_to_str(work_start),
+                'work_end': time_to_str(work_end),
+                'sleep_start': optimized['sleep_start'],
+                'sleep_end': optimized['sleep_end'],
+                'coffee_windows': json.dumps(optimized['coffee_windows']),
+                'meal_windows': json.dumps(optimized['meal_windows']),
+                'brightness_windows': json.dumps(optimized['brightness_windows']),
+                'shift_type': optimized['shift_type']
+            }).eq('user_id', user_id).eq('active', True).execute()
+            
+            await query.edit_message_text(
+                f"✅ **Schedule Updated!**\n\n"
+                f"New work hours: {time_to_str(work_start)}-{time_to_str(work_end)}\n"
+                f"Sleep: {optimized['sleep_start']}-{optimized['sleep_end']}\n\n"
+                f"Your notifications have been adjusted."
+            )
+            
+        elif query.data == 'keep_current':
+            await query.edit_message_text("✅ Keeping your current schedule. Let me know if you need anything else!")
+            
+    except Exception as e:
+        logger.error(f"Error in callback handler: {e}")
+        await query.edit_message_text("Sorry, something went wrong.")
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel conversation"""
+    await update.message.reply_text("Operation cancelled.")
+    return ConversationHandler.END
+
+# ==================== MAIN FUNCTION ====================
 
 def main():
     """Start the bot"""
     # Get token
     token = os.getenv('TELEGRAM_TOKEN')
     if not token:
-        print("ERROR: TELEGRAM_TOKEN not found in .env file!")
-        print("Please make sure your .env file contains: TELEGRAM_TOKEN=your_bot_token_here")
+        logger.error("TELEGRAM_TOKEN not found in environment variables!")
         return
     
-    print(f"Using token: {token[:10]}...")  # Print first 10 chars for verification
+    logger.info("Starting Nightflow Bot...")
     
     try:
         # Create application
@@ -448,26 +1079,35 @@ def main():
                 AWAITING_ROTATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_rotating_schedule)],
             },
             fallbacks=[CommandHandler('cancel', cancel)]
-            per_message=True  # Add this line
         )
         
-        # Add handlers
+        # Add command handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("schedule", schedule_command))
+        application.add_handler(CommandHandler("caffeine", caffeine_advice_command))
         application.add_handler(CommandHandler("dayoff", dayoff_command))
-        application.add_handler(CommandHandler("adjust", adjust_command))
+        application.add_handler(CommandHandler("change", change_shift_command))
         application.add_handler(CommandHandler("report", report_command))
         application.add_handler(CommandHandler("cancel", cancel))
+        
+        # Add conversation handler
         application.add_handler(conv_handler)
+        
+        # Add callback query handler
         application.add_handler(CallbackQueryHandler(handle_callback))
         
+        # Set up job queue for notifications
+        job_queue = application.job_queue
+        if job_queue:
+            # Check notifications every minute
+            job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+            logger.info("Notification job scheduled")
+        
         # Start bot
-        print("🤖 Nightflow Bot is starting...")
-        print("Press Ctrl+C to stop")
+        logger.info("Bot is ready and polling...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
         
     except Exception as e:
-        print(f"ERROR starting bot: {e}")
         logger.error(f"Failed to start bot: {e}")
 
 if __name__ == '__main__':
