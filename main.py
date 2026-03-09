@@ -1,4 +1,5 @@
 import os
+import traceback
 import logging
 import asyncio
 from datetime import datetime, time, timedelta, date
@@ -259,17 +260,16 @@ def calculate_optimal_schedule(work_start: time, work_end: time) -> Dict:
         "shift_type": shift_type
     }
 
-def is_within_caffeine_window(sleep_end: time, current_time: time) -> bool:
-    """Check if current time is within 6 hours of sleep"""
-    sleep_end_dt = datetime.combine(date.today(), sleep_end)
+def is_within_caffeine_window(sleep_start: time, current_time: time) -> bool:
+    """Return True if current time is inside the no-caffeine window (6h before sleep)."""
+    sleep_start_dt = datetime.combine(date.today(), sleep_start)
     current_dt = datetime.combine(date.today(), current_time)
-    
-    # If sleep end is before current, it's next day
-    if sleep_end_dt <= current_dt:
-        sleep_end_dt += timedelta(days=1)
-    
-    cutoff = sleep_end_dt - timedelta(hours=6)
-    return current_dt >= cutoff
+
+    if sleep_start_dt <= current_dt:
+        sleep_start_dt += timedelta(days=1)
+
+    cutoff_dt = sleep_start_dt - timedelta(hours=6)
+    return current_dt >= cutoff_dt
 
 def generate_transition_advice(old_work_start: time, old_work_end: time, 
                                new_work_start: time, new_work_end: time,
@@ -317,19 +317,16 @@ def generate_transition_advice(old_work_start: time, old_work_end: time,
 # ==================== NOTIFICATION FUNCTIONS ====================
 
 async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: str, message: str, notification_type: str):
-    """Send notification to user and log it"""
+    """Send notification to user and log it."""
     try:
-        # Get telegram ID from user ID
         result = supabase_client.table('users').select('telegram_id').eq('id', user_id).execute()
         if not result.data:
             return
-        
+
         telegram_id = result.data[0]['telegram_id']
-        
-        # Send message
+
         await context.bot.send_message(chat_id=telegram_id, text=message)
-        
-        # Log notification
+
         supabase_client.table('notifications').insert({
             'user_id': user_id,
             'type': notification_type,
@@ -338,112 +335,138 @@ async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: str, me
             'sent_at': datetime.now().isoformat(),
             'message': message
         }).execute()
-        
+
         logger.info(f"Sent {notification_type} notification to user {user_id}")
-        
+
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
+        logger.error(traceback.format_exc())
 
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
-    """Job to check and send scheduled notifications"""
+    """Job to check and send scheduled notifications."""
     try:
         now = datetime.now()
-        current_time = now.time()
-        current_hour_min = current_time.strftime("%H:%M")
-        
-        # Get all users with active schedules
-        users_result = supabase_client.table('users').select('id').eq('notification_enabled', True).execute()
-        
+        today = now.date()
+        current_hour_min = now.strftime("%H:%M")
+
+        users_result = supabase_client.table('users').select('id')\
+            .eq('notification_enabled', True)\
+            .execute()
+
         for user in users_result.data:
             user_id = user['id']
-            
-            # Get user's schedule
+
+            # Skip if today is marked as off
+            daily_result = supabase_client.table('daily_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('date', str(today))\
+                .execute()
+
+            if daily_result.data:
+                daily = daily_result.data[0]
+                if daily.get('shift_type') == 'off':
+                    continue
+
             schedule_result = supabase_client.table('constant_schedules').select('*')\
                 .eq('user_id', user_id)\
                 .eq('active', True)\
                 .execute()
-            
+
             if not schedule_result.data:
                 continue
-            
+
             schedule = schedule_result.data[0]
-            
-            # Check coffee windows
+
             if schedule.get('coffee_windows'):
                 coffee_windows = safe_json_parse(schedule['coffee_windows'])
                 for window in coffee_windows:
                     if window.get('time') == current_hour_min:
-                        await send_notification(context, user_id, window.get('message', 'Time for coffee!'), 'coffee')
-            
-            # Check meal windows
+                        await send_notification(
+                            context,
+                            user_id,
+                            window.get('message', 'Time for coffee!'),
+                            'coffee'
+                        )
+
             if schedule.get('meal_windows'):
                 meal_windows = safe_json_parse(schedule['meal_windows'])
                 for window in meal_windows:
                     if window.get('time') == current_hour_min:
-                        await send_notification(context, user_id, window.get('message', 'Time to eat!'), 'meal')
-            
-            # Check brightness windows
+                        await send_notification(
+                            context,
+                            user_id,
+                            window.get('message', 'Time to eat!'),
+                            'meal'
+                        )
+
             if schedule.get('brightness_windows'):
                 brightness_windows = safe_json_parse(schedule['brightness_windows'])
                 for window in brightness_windows:
                     if window.get('time') == current_hour_min:
-                        await send_notification(context, user_id, window.get('message', 'Light reminder!'), 'brightness')
-            
-            # Check sleep reminders
+                        await send_notification(
+                            context,
+                            user_id,
+                            window.get('message', 'Light reminder!'),
+                            'brightness'
+                        )
+
             if schedule.get('sleep_start'):
-                # Sleep reminder 30 min before
                 sleep_start = str_to_time(schedule['sleep_start'])
                 if sleep_start:
-                    sleep_dt = datetime.combine(now.date(), sleep_start)
+                    sleep_dt = datetime.combine(today, sleep_start)
+                    if sleep_dt <= now:
+                        sleep_dt += timedelta(days=1)
+
                     reminder_dt = sleep_dt - timedelta(minutes=30)
-                    if reminder_dt.time().strftime("%H:%M") == current_hour_min:
+                    if reminder_dt.strftime("%H:%M") == current_hour_min:
                         await send_notification(
-                            context, user_id, 
-                            f"😴 30 minutes until sleep time ({schedule['sleep_start']}). Start winding down.", 
+                            context,
+                            user_id,
+                            f"😴 30 minutes until sleep time ({schedule['sleep_start']}). Start winding down.",
                             'sleep'
                         )
-        
+
     except Exception as e:
         logger.error(f"Error in scheduled notifications: {e}")
+        logger.error(traceback.format_exc())
 
 async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /caffeine command - check if coffee is safe now"""
+    """Handle /caffeine command - check if coffee is safe now."""
     try:
         user_id = get_user_id(update.effective_user.id)
         if not user_id:
             await update.message.reply_text("Please use /start first to set up your account!")
             return
-        
-        # Get user's schedule
+
         schedule_result = supabase_client.table('constant_schedules').select('*')\
             .eq('user_id', user_id)\
             .eq('active', True)\
             .execute()
-        
+
         if not schedule_result.data:
             await update.message.reply_text("Please set up your schedule first using /start")
             return
-        
+
         schedule = schedule_result.data[0]
-        sleep_end = str_to_time(schedule['sleep_end'])
-        
-        if not sleep_end:
+        sleep_start = str_to_time(schedule['sleep_start'])
+
+        if not sleep_start:
             await update.message.reply_text("Sleep schedule not configured properly.")
             return
-        
+
         now = datetime.now().time()
-        
-        if is_within_caffeine_window(sleep_end, now):
-            # Calculate time until cutoff
-            sleep_end_dt = datetime.combine(date.today(), sleep_end)
-            now_dt = datetime.combine(date.today(), now)
-            
-            if sleep_end_dt <= now_dt:
-                sleep_end_dt += timedelta(days=1)
-            
-            cutoff_dt = sleep_end_dt - timedelta(hours=6)
+
+        sleep_start_dt = datetime.combine(date.today(), sleep_start)
+        now_dt = datetime.combine(date.today(), now)
+
+        if sleep_start_dt <= now_dt:
+            sleep_start_dt += timedelta(days=1)
+
+        cutoff_dt = sleep_start_dt - timedelta(hours=6)
+
+        if is_within_caffeine_window(sleep_start, now):
             minutes_left = int((cutoff_dt - now_dt).total_seconds() / 60)
-            
+
             if minutes_left > 0:
                 await update.message.reply_text(
                     f"⚠️ **Caffeine Warning**\n\n"
@@ -455,7 +478,7 @@ async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_
             else:
                 await update.message.reply_text(
                     f"🚫 **Caffeine window closed**\n\n"
-                    f"You're within 6 hours of your sleep time ({schedule['sleep_end']}).\n"
+                    f"You're within 6 hours of your sleep time ({schedule['sleep_start']}).\n"
                     f"Coffee now will make falling asleep harder.\n"
                     f"Try herbal tea or water instead.",
                     parse_mode=ParseMode.MARKDOWN
@@ -464,34 +487,31 @@ async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(
                 f"✅ **Safe for caffeine**\n\n"
                 f"You're outside the 6-hour sleep window.\n"
-                f"Enjoy your coffee! Remember: last call is "
-                f"{(datetime.combine(date.today(), sleep_end) - timedelta(hours=6)).strftime('%H:%M')}",
+                f"Enjoy your coffee! Remember: last call is {cutoff_dt.strftime('%H:%M')}",
                 parse_mode=ParseMode.MARKDOWN
             )
-            
+
     except Exception as e:
         logger.error(f"Error in caffeine_advice: {e}")
+        logger.error(traceback.format_exc())
         await update.message.reply_text("Sorry, couldn't check caffeine safety.")
-
 # ==================== COMMAND HANDLERS ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command handler"""
+    """Start command handler."""
     user = update.effective_user
-    
+
     try:
-        # Check if user exists
         result = supabase_client.table('users').select('*').eq('telegram_id', user.id).execute()
-        
+
         if not result.data:
-            # New user - start onboarding
             keyboard = [
                 [InlineKeyboardButton("Constant Schedule", callback_data='shift_constant')],
                 [InlineKeyboardButton("Rotating Schedule", callback_data='shift_rotating')],
                 [InlineKeyboardButton("Learn More First", callback_data='learn_more')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             welcome_msg = (
                 f"🌙 **Welcome to Nightflow, {user.first_name}!**\n\n"
                 f"I'm your personal night shift companion. I'll help you:\n"
@@ -502,28 +522,58 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Adapt to shift changes\n\n"
                 f"First, tell me about your shift pattern:"
             )
-            
+
             await update.message.reply_text(welcome_msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-        else:
-            # Update last active
-            supabase_client.table('users').update({
-                'last_active': datetime.now().isoformat()
-            }).eq('telegram_id', user.id).execute()
-            
+            return
+
+        db_user = result.data[0]
+
+        supabase_client.table('users').update({
+            'last_active': datetime.now().isoformat()
+        }).eq('telegram_id', user.id).execute()
+
+        const_result = supabase_client.table('constant_schedules').select('id')\
+            .eq('user_id', db_user['id'])\
+            .eq('active', True)\
+            .execute()
+
+        rotating_result = supabase_client.table('rotating_patterns').select('id')\
+            .eq('user_id', db_user['id'])\
+            .eq('active', True)\
+            .execute()
+
+        has_schedule = bool(const_result.data or rotating_result.data)
+
+        if not has_schedule:
             keyboard = [
-                [InlineKeyboardButton("📅 Today's Schedule", callback_data='show_schedule')],
-                [InlineKeyboardButton("☕ Caffeine Check", callback_data='caffeine_check')],
-                [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
-                [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
+                [InlineKeyboardButton("Constant Schedule", callback_data='shift_constant')],
+                [InlineKeyboardButton("Rotating Schedule", callback_data='shift_rotating')],
+                [InlineKeyboardButton("Learn More First", callback_data='learn_more')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await update.message.reply_text(
-                f"Welcome back, {user.first_name}! What would you like to do?",
+                "It looks like setup wasn't finished. Please choose your shift pattern again:",
                 reply_markup=reply_markup
             )
+            return
+
+        keyboard = [
+            [InlineKeyboardButton("📅 Today's Schedule", callback_data='show_schedule')],
+            [InlineKeyboardButton("☕ Caffeine Check", callback_data='caffeine_check')],
+            [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
+            [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"Welcome back, {user.first_name}! What would you like to do?",
+            reply_markup=reply_markup
+        )
+
     except Exception as e:
         logger.error(f"Error in start: {e}")
+        logger.error(traceback.format_exc())
         await update.message.reply_text("Sorry, something went wrong. Please try again.")
 
 async def shift_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -592,39 +642,33 @@ async def shift_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
 async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save constant schedule"""
+    """Save constant schedule."""
     try:
-        # Parse work hours
         work_hours = update.message.text.strip().replace(" ", "")
         if '-' not in work_hours:
             raise ValueError("Missing hyphen")
-        
+
         start_str, end_str = work_hours.split('-')
-        
+
         work_start = str_to_time(start_str)
         work_end = str_to_time(end_str)
-        
+
         if not work_start or not work_end:
             raise ValueError("Invalid time format")
-        
-        # Get user
+
         user_result = supabase_client.table('users').select('id').eq('telegram_id', update.effective_user.id).execute()
         if not user_result.data:
             await update.message.reply_text("User not found. Please use /start again.")
             return ConversationHandler.END
-            
+
         user_id = user_result.data[0]['id']
-        
-        # Calculate optimal schedule
         optimized = calculate_optimal_schedule(work_start, work_end)
-        
-        # Deactivate old schedules
+
         supabase_client.table('constant_schedules').update({'active': False})\
             .eq('user_id', user_id)\
             .eq('active', True)\
             .execute()
-        
-        # Save to database
+
         supabase_client.table('constant_schedules').insert({
             'user_id': user_id,
             'work_start': time_to_str(work_start),
@@ -637,16 +681,14 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
             'shift_type': optimized['shift_type'],
             'active': True
         }).execute()
-        
-        # Generate daily schedule for today
+
         today = datetime.now().date()
-        
-        # Check if exists
+
         existing = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
             .eq('date', str(today))\
             .execute()
-        
+
         if existing.data:
             supabase_client.table('daily_schedules').update({
                 'shift_type': optimized['shift_type'],
@@ -667,12 +709,11 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
                 'sleep_end': optimized['sleep_end'],
                 'is_custom': False
             }).execute()
-        
-        # Format schedule for display
+
         coffee_times = [c['time'] for c in optimized['coffee_windows']]
         meal_times = [m['time'] for m in optimized['meal_windows']]
         brightness_times = [b['time'] for b in optimized['brightness_windows']]
-        
+
         schedule_msg = (
             f"✅ **Your optimized schedule is ready!**\n\n"
             f"**Work:** {time_to_str(work_start)} - {time_to_str(work_end)} ({optimized['shift_type']} shift)\n"
@@ -688,9 +729,10 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
             f"/change - Adjust for shift changes\n"
             f"/report - View weekly report"
         )
-        
+
         await update.message.reply_text(schedule_msg, parse_mode=ParseMode.MARKDOWN)
-        
+        return ConversationHandler.END
+
     except ValueError as e:
         logger.error(f"Value error in save_constant_schedule: {e}")
         await update.message.reply_text(
@@ -700,12 +742,12 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode=ParseMode.MARKDOWN
         )
         return AWAITING_CONSTANT
+
     except Exception as e:
         logger.error(f"Error saving schedule: {e}")
+        logger.error(traceback.format_exc())
         await update.message.reply_text("Sorry, something went wrong. Please try again.")
         return ConversationHandler.END
-    
-    return ConversationHandler.END
 
 async def save_rotating_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Save rotating schedule"""
@@ -749,27 +791,25 @@ async def save_rotating_schedule(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Sorry, something went wrong. Please try again.")
     
     return ConversationHandler.END
-
-async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show today's schedule"""
+async def send_schedule_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Send today's schedule to a chat."""
     try:
-        user_id = get_user_id(update.effective_user.id)
+        user_id = get_user_id(telegram_user_id)
         if not user_id:
-            await update.message.reply_text("Please use /start first to set up your account!")
+            await context.bot.send_message(chat_id=chat_id, text="Please use /start first to set up your account!")
             return
-        
+
         today = datetime.now().date()
-        
-        # Get today's schedule
+
         schedule_result = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
             .eq('date', str(today))\
             .execute()
-        
+
         if schedule_result.data:
             s = schedule_result.data[0]
             custom_text = "⚠️ Custom schedule" if s.get('is_custom', False) else "✅ Optimized schedule"
-            
+
             msg = (
                 f"📅 **Today's Schedule** ({today})\n\n"
                 f"**Shift:** {s.get('shift_type', 'unknown').title() if s.get('shift_type') else 'Unknown'}\n"
@@ -777,31 +817,93 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"**Sleep:** {s.get('sleep_start', '--')} - {s.get('sleep_end', '--')}\n\n"
                 f"{custom_text}"
             )
-            
-            await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+            return
+
+        const_result = supabase_client.table('constant_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .eq('active', True)\
+            .execute()
+
+        if const_result.data:
+            s = const_result.data[0]
+            msg = (
+                f"📅 **Today's Schedule** (from your constant schedule)\n\n"
+                f"**Work:** {s['work_start']} - {s['work_end']}\n"
+                f"**Sleep:** {s['sleep_start']} - {s['sleep_end']}\n\n"
+                f"Use /change to modify if needed."
+            )
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
         else:
-            # Try to get constant schedule and generate for today
-            const_result = supabase_client.table('constant_schedules').select('*')\
-                .eq('user_id', user_id)\
-                .eq('active', True)\
-                .execute()
-            
-            if const_result.data:
-                s = const_result.data[0]
-                msg = (
-                    f"📅 **Today's Schedule** (from your constant schedule)\n\n"
-                    f"**Work:** {s['work_start']} - {s['work_end']}\n"
-                    f"**Sleep:** {s['sleep_start']} - {s['sleep_end']}\n\n"
-                    f"Use /change to modify if needed."
-                )
-                await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-            else:
-                msg = "No schedule found. Please use /start to set up your schedule."
-                await update.message.reply_text(msg)
-        
+            await context.bot.send_message(chat_id=chat_id, text="No schedule found. Please use /start to set up your schedule.")
+
     except Exception as e:
-        logger.error(f"Error showing schedule: {e}")
-        await update.message.reply_text("Sorry, couldn't fetch your schedule.")
+        logger.error(f"Error in send_schedule_message: {e}")
+        logger.error(traceback.format_exc())
+        await context.bot.send_message(chat_id=chat_id, text="Sorry, couldn't fetch your schedule.")
+
+
+async def send_report_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Send weekly report to a chat."""
+    try:
+        user_id = get_user_id(telegram_user_id)
+        if not user_id:
+            await context.bot.send_message(chat_id=chat_id, text="Please use /start first!")
+            return
+
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=7)
+
+        schedules = supabase_client.table('daily_schedules').select('*')\
+            .eq('user_id', user_id)\
+            .gte('date', str(start_date))\
+            .lte('date', str(end_date))\
+            .execute()
+
+        if not schedules.data:
+            await context.bot.send_message(chat_id=chat_id, text="Not enough data for a report yet. Check back in a week!")
+            return
+
+        total_days = len(schedules.data)
+        work_days = sum(1 for s in schedules.data if s.get('shift_type') != 'off')
+        off_days = total_days - work_days
+        consistent_days = sum(1 for s in schedules.data if not s.get('is_custom', False))
+        consistency_score = (consistent_days / total_days * 100) if total_days > 0 else 0
+
+        night_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'night')
+        day_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'day')
+        evening_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'evening')
+
+        report = (
+            f"📊 **Weekly Report**\n"
+            f"{start_date} to {end_date}\n\n"
+            f"**Overview:**\n"
+            f"• Total days: {total_days}\n"
+            f"• Work days: {work_days}\n"
+            f"• Days off: {off_days}\n\n"
+            f"**Shift Breakdown:**\n"
+            f"• Night shifts: {night_shifts}\n"
+            f"• Day shifts: {day_shifts}\n"
+            f"• Evening shifts: {evening_shifts}\n\n"
+            f"**Consistency:** {consistency_score:.1f}%\n\n"
+        )
+
+        if consistency_score < 50:
+            report += "⚠️ Your schedule has been irregular. Use /change to get transition help."
+        elif consistency_score < 80:
+            report += "👍 Pretty consistent! A few adjustments could help."
+        else:
+            report += "🌟 Excellent consistency! Your body thanks you."
+
+        await context.bot.send_message(chat_id=chat_id, text=report, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        logger.error(f"Error in send_report_message: {e}")
+        logger.error(traceback.format_exc())
+        await context.bot.send_message(chat_id=chat_id, text="Sorry, couldn't generate report.")
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show today's schedule."""
+    await send_schedule_message(update.effective_chat.id, update.effective_user.id, context)
 
 async def dayoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle day off requests"""
@@ -948,85 +1050,9 @@ async def change_shift_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"Error in change_shift: {e}")
         await update.message.reply_text("Sorry, couldn't process shift change.")
-
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show weekly report"""
-    try:
-        user_id = get_user_id(update.effective_user.id)
-        if not user_id:
-            await update.message.reply_text("Please use /start first!")
-            return
-        
-        # Get last 7 days of schedules
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=7)
-        
-        schedules = supabase_client.table('daily_schedules').select('*')\
-            .eq('user_id', user_id)\
-            .gte('date', str(start_date))\
-            .lte('date', str(end_date))\
-            .execute()
-        
-        if not schedules.data:
-            await update.message.reply_text("Not enough data for a report yet. Check back in a week!")
-            return
-        
-        # Calculate stats
-        total_days = len(schedules.data)
-        work_days = sum(1 for s in schedules.data if s.get('shift_type') != 'off')
-        off_days = total_days - work_days
-        
-        # Calculate consistency (simplified)
-        consistent_days = sum(1 for s in schedules.data if not s.get('is_custom', False))
-        consistency_score = (consistent_days / total_days * 100) if total_days > 0 else 0
-        
-        # Get shift types
-        night_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'night')
-        day_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'day')
-        evening_shifts = sum(1 for s in schedules.data if s.get('shift_type') == 'evening')
-        
-        # Generate report
-        report = (
-            f"📊 **Weekly Report**\n"
-            f"{start_date} to {end_date}\n\n"
-            f"**Overview:**\n"
-            f"• Total days: {total_days}\n"
-            f"• Work days: {work_days}\n"
-            f"• Days off: {off_days}\n\n"
-            f"**Shift Breakdown:**\n"
-            f"• Night shifts: {night_shifts}\n"
-            f"• Day shifts: {day_shifts}\n"
-            f"• Evening shifts: {evening_shifts}\n\n"
-            f"**Consistency:** {consistency_score:.1f}%\n\n"
-        )
-        
-        if consistency_score < 50:
-            report += "⚠️ Your schedule has been irregular. Use /change to get transition help."
-        elif consistency_score < 80:
-            report += "👍 Pretty consistent! A few adjustments could help."
-        else:
-            report += "🌟 Excellent consistency! Your body thanks you."
-        
-        # Save report
-        supabase_client.table('weekly_reports').insert({
-            'user_id': user_id,
-            'week_start': str(start_date),
-            'week_end': str(end_date),
-            'adherence_score': consistency_score,
-            'data': json.dumps({
-                'work_days': work_days,
-                'off_days': off_days,
-                'night_shifts': night_shifts,
-                'day_shifts': day_shifts,
-                'evening_shifts': evening_shifts
-            })
-        }).execute()
-        
-        await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-        
-    except Exception as e:
-        logger.error(f"Error generating report: {e}")
-        await update.message.reply_text("Sorry, couldn't generate report.")
+    """Show weekly report."""
+    await send_report_message(update.effective_chat.id, update.effective_user.id, context)
 
 async def adjust_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Redirect to change command (for backward compatibility)"""
@@ -1037,57 +1063,120 @@ async def adjust_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle callback queries"""
+    """Handle callback queries."""
     query = update.callback_query
     await query.answer()
-    
+
     try:
         if query.data == 'show_schedule':
-            # Create a fake message object
-            class FakeMessage:
-                def __init__(self, chat_id, text):
-                    self.chat_id = chat_id
-                    self.text = text
-                    self.from_user = query.from_user
-                    
-                async def reply_text(self, *args, **kwargs):
-                    return await query.message.reply_text(*args, **kwargs)
-            
-            fake_update = Update(update.update_id)
-            fake_update.message = FakeMessage(query.message.chat_id, "/schedule")
-            fake_update.effective_user = query.from_user
-            await schedule_command(fake_update, context)
-            
+            await send_schedule_message(query.message.chat_id, query.from_user.id, context)
+
         elif query.data == 'caffeine_check':
-            class FakeMessage:
-                def __init__(self, chat_id, text):
-                    self.chat_id = chat_id
-                    self.text = text
-                    self.from_user = query.from_user
-                    
-                async def reply_text(self, *args, **kwargs):
-                    return await query.message.reply_text(*args, **kwargs)
-            
-            fake_update = Update(update.update_id)
-            fake_update.message = FakeMessage(query.message.chat_id, "/caffeine")
-            fake_update.effective_user = query.from_user
-            await caffeine_advice_command(fake_update, context)
-            
+            user_id = get_user_id(query.from_user.id)
+            if not user_id:
+                await query.message.reply_text("Please use /start first to set up your account!")
+                return
+
+            schedule_result = supabase_client.table('constant_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('active', True)\
+                .execute()
+
+            if not schedule_result.data:
+                await query.message.reply_text("Please set up your schedule first using /start")
+                return
+
+            schedule = schedule_result.data[0]
+            sleep_start = str_to_time(schedule['sleep_start'])
+
+            if not sleep_start:
+                await query.message.reply_text("Sleep schedule not configured properly.")
+                return
+
+            now = datetime.now().time()
+            sleep_start_dt = datetime.combine(date.today(), sleep_start)
+            now_dt = datetime.combine(date.today(), now)
+
+            if sleep_start_dt <= now_dt:
+                sleep_start_dt += timedelta(days=1)
+
+            cutoff_dt = sleep_start_dt - timedelta(hours=6)
+
+            if is_within_caffeine_window(sleep_start, now):
+                minutes_left = int((cutoff_dt - now_dt).total_seconds() / 60)
+
+                if minutes_left > 0:
+                    msg = (
+                        f"⚠️ **Caffeine Warning**\n\n"
+                        f"You have {minutes_left} minutes left for caffeine today.\n"
+                        f"After {cutoff_dt.strftime('%H:%M')}, caffeine will disrupt your sleep.\n\n"
+                        f"Last call: {cutoff_dt.strftime('%H:%M')}"
+                    )
+                else:
+                    msg = (
+                        f"🚫 **Caffeine window closed**\n\n"
+                        f"You're within 6 hours of your sleep time ({schedule['sleep_start']}).\n"
+                        f"Coffee now will make falling asleep harder.\n"
+                        f"Try herbal tea or water instead."
+                    )
+            else:
+                msg = (
+                    f"✅ **Safe for caffeine**\n\n"
+                    f"You're outside the 6-hour sleep window.\n"
+                    f"Enjoy your coffee! Remember: last call is {cutoff_dt.strftime('%H:%M')}"
+                )
+
+            await query.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
         elif query.data == 'day_off':
-            class FakeMessage:
-                def __init__(self, chat_id, text):
-                    self.chat_id = chat_id
-                    self.text = text
-                    self.from_user = query.from_user
-                    
-                async def reply_text(self, *args, **kwargs):
-                    return await query.message.reply_text(*args, **kwargs)
-            
-            fake_update = Update(update.update_id)
-            fake_update.message = FakeMessage(query.message.chat_id, "/dayoff")
-            fake_update.effective_user = query.from_user
-            await dayoff_command(fake_update, context)
-            
+            user_id = get_user_id(query.from_user.id)
+            if not user_id:
+                await query.message.reply_text("Please use /start first!")
+                return
+
+            today = datetime.now().date()
+
+            existing = supabase_client.table('daily_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('date', str(today))\
+                .execute()
+
+            if existing.data:
+                supabase_client.table('daily_schedules').update({
+                    'shift_type': 'off',
+                    'work_start': None,
+                    'work_end': None,
+                    'sleep_start': None,
+                    'sleep_end': None,
+                    'is_custom': True
+                }).eq('id', existing.data[0]['id']).execute()
+            else:
+                supabase_client.table('daily_schedules').insert({
+                    'user_id': user_id,
+                    'date': str(today),
+                    'shift_type': 'off',
+                    'work_start': None,
+                    'work_end': None,
+                    'sleep_start': None,
+                    'sleep_end': None,
+                    'is_custom': True
+                }).execute()
+
+            keyboard = [
+                [InlineKeyboardButton("Resume Tomorrow", callback_data='resume_tomorrow')],
+                [InlineKeyboardButton("Keep Day Off", callback_data='keep_off')],
+                [InlineKeyboardButton("Back to Work Today", callback_data='back_to_work')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.message.reply_text(
+                "✅ **Day off noted!**\n\n"
+                "I've disabled notifications for today.\n"
+                "Rest well! What would you like for tomorrow?",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+
         elif query.data == 'settings':
             keyboard = [
                 [InlineKeyboardButton("🔔 Toggle Notifications", callback_data='toggle_notifications')],
@@ -1096,34 +1185,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("⚙️ **Settings**", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-            
+
         elif query.data == 'toggle_notifications':
-            user_id = get_user_id(update.effective_user.id)
+            user_id = get_user_id(query.from_user.id)
             if user_id:
-                # Get current setting
                 user = supabase_client.table('users').select('notification_enabled').eq('id', user_id).execute()
                 if user.data:
                     current = user.data[0].get('notification_enabled', True)
-                    # Toggle
                     supabase_client.table('users').update({'notification_enabled': not current}).eq('id', user_id).execute()
                     status = "enabled" if not current else "disabled"
                     await query.edit_message_text(f"✅ Notifications {status}!")
-            
+
         elif query.data == 'view_report':
-            class FakeMessage:
-                def __init__(self, chat_id, text):
-                    self.chat_id = chat_id
-                    self.text = text
-                    self.from_user = query.from_user
-                    
-                async def reply_text(self, *args, **kwargs):
-                    return await query.message.reply_text(*args, **kwargs)
-            
-            fake_update = Update(update.update_id)
-            fake_update.message = FakeMessage(query.message.chat_id, "/report")
-            fake_update.effective_user = query.from_user
-            await report_command(fake_update, context)
-            
+            await send_report_message(query.message.chat_id, query.from_user.id, context)
+
         elif query.data == 'back_main':
             keyboard = [
                 [InlineKeyboardButton("📅 Today's Schedule", callback_data='show_schedule')],
@@ -1133,49 +1208,86 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"Welcome back! What would you like to do?",
+                "Welcome back! What would you like to do?",
                 reply_markup=reply_markup
             )
-            
+
         elif query.data == 'resume_tomorrow':
             await query.edit_message_text("Great! I'll resume your normal schedule tomorrow.")
-            
+
         elif query.data == 'keep_off':
             await query.edit_message_text("Okay, I'll keep today as a day off. Use /schedule to update when you're ready.")
-            
+
         elif query.data == 'back_to_work':
-            # Delete today's day off
-            user_id = get_user_id(update.effective_user.id)
-            if user_id:
-                today = datetime.now().date()
+            user_id = get_user_id(query.from_user.id)
+            if not user_id:
+                await query.edit_message_text("Please use /start first!")
+                return
+
+            today = datetime.now().date()
+
+            const_result = supabase_client.table('constant_schedules').select('*')\
+                .eq('user_id', user_id)\
+                .eq('active', True)\
+                .execute()
+
+            if const_result.data:
+                s = const_result.data[0]
+
+                existing = supabase_client.table('daily_schedules').select('*')\
+                    .eq('user_id', user_id)\
+                    .eq('date', str(today))\
+                    .execute()
+
+                payload = {
+                    'user_id': user_id,
+                    'date': str(today),
+                    'shift_type': s['shift_type'],
+                    'work_start': s['work_start'],
+                    'work_end': s['work_end'],
+                    'sleep_start': s['sleep_start'],
+                    'sleep_end': s['sleep_end'],
+                    'is_custom': False
+                }
+
+                if existing.data:
+                    supabase_client.table('daily_schedules').update({
+                        'shift_type': s['shift_type'],
+                        'work_start': s['work_start'],
+                        'work_end': s['work_end'],
+                        'sleep_start': s['sleep_start'],
+                        'sleep_end': s['sleep_end'],
+                        'is_custom': False
+                    }).eq('id', existing.data[0]['id']).execute()
+                else:
+                    supabase_client.table('daily_schedules').insert(payload).execute()
+
+                await query.edit_message_text("✅ Back to work! I've restored your regular schedule for today.")
+            else:
                 supabase_client.table('daily_schedules').delete()\
                     .eq('user_id', user_id)\
                     .eq('date', str(today))\
                     .execute()
-                await query.edit_message_text("✅ Back to work! I've restored your regular schedule.")
-            
+                await query.edit_message_text("✅ Back to work! No constant schedule found, so I removed the day-off override.")
+
         elif query.data.startswith('update_shift_'):
-            # Extract new shift times
             shift_time = query.data.replace('update_shift_', '')
             if '-' in shift_time:
                 start_str, end_str = shift_time.split('-')
-                
-                user_id = get_user_id(update.effective_user.id)
+
+                user_id = get_user_id(query.from_user.id)
                 if user_id:
-                    # Calculate new optimal schedule
                     work_start = str_to_time(start_str)
                     work_end = str_to_time(end_str)
-                    
+
                     if work_start and work_end:
                         optimized = calculate_optimal_schedule(work_start, work_end)
-                        
-                        # Deactivate old schedule
+
                         supabase_client.table('constant_schedules').update({'active': False})\
                             .eq('user_id', user_id)\
                             .eq('active', True)\
                             .execute()
-                        
-                        # Insert new schedule
+
                         supabase_client.table('constant_schedules').insert({
                             'user_id': user_id,
                             'work_start': time_to_str(work_start),
@@ -1188,22 +1300,50 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             'shift_type': optimized['shift_type'],
                             'active': True
                         }).execute()
-                        
+
+                        today = datetime.now().date()
+                        existing = supabase_client.table('daily_schedules').select('*')\
+                            .eq('user_id', user_id)\
+                            .eq('date', str(today))\
+                            .execute()
+
+                        if existing.data:
+                            supabase_client.table('daily_schedules').update({
+                                'shift_type': optimized['shift_type'],
+                                'work_start': time_to_str(work_start),
+                                'work_end': time_to_str(work_end),
+                                'sleep_start': optimized['sleep_start'],
+                                'sleep_end': optimized['sleep_end'],
+                                'is_custom': False
+                            }).eq('id', existing.data[0]['id']).execute()
+                        else:
+                            supabase_client.table('daily_schedules').insert({
+                                'user_id': user_id,
+                                'date': str(today),
+                                'shift_type': optimized['shift_type'],
+                                'work_start': time_to_str(work_start),
+                                'work_end': time_to_str(work_end),
+                                'sleep_start': optimized['sleep_start'],
+                                'sleep_end': optimized['sleep_end'],
+                                'is_custom': False
+                            }).execute()
+
                         await query.edit_message_text(
                             f"✅ **Schedule Updated!**\n\n"
                             f"New work hours: {time_to_str(work_start)}-{time_to_str(work_end)}\n"
                             f"Sleep: {optimized['sleep_start']}-{optimized['sleep_end']}\n\n"
-                            f"Your notifications have been adjusted.",
+                            f"Your notifications and today's schedule have been adjusted.",
                             parse_mode=ParseMode.MARKDOWN
                         )
                     else:
                         await query.edit_message_text("❌ Invalid time format.")
-            
+
         elif query.data == 'keep_current':
             await query.edit_message_text("✅ Keeping your current schedule. Let me know if you need anything else!")
-            
+
     except Exception as e:
         logger.error(f"Error in callback handler: {e}")
+        logger.error(traceback.format_exc())
         await query.edit_message_text("Sorry, something went wrong.")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1234,10 +1374,13 @@ def main():
                 AWAITING_CONSTANT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_constant_schedule)],
                 AWAITING_ROTATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_rotating_schedule)],
             },
-            fallbacks=[CommandHandler('cancel', cancel)],
-            per_message=True
+            fallbacks=[
+                CommandHandler('cancel', cancel),
+                CommandHandler('start', start),
+            ],
+            allow_reentry=True
         )
-        
+                
         # Add command handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("schedule", schedule_command))
