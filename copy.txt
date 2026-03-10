@@ -1,0 +1,11 @@
+def build_main_menu():
+    """Build main menu keyboard."""
+    keyboard = [
+        [InlineKeyboardButton("📋 Today", callback_data='show_today')],
+        [InlineKeyboardButton("☕ Caffeine Check", callback_data='caffeine_check')],
+        [InlineKeyboardButton("🍽️ Meal Advice", callback_data='meal_check')],
+        [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
+        [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
+        [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
+    ]
+    return InlineKeyboardMarkup(keyboard)
