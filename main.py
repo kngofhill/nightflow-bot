@@ -313,12 +313,13 @@ async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_
 def build_main_menu():
     """Build main menu keyboard."""
     keyboard = [
-        [InlineKeyboardButton("📋 Today", callback_data='show_today')],
+        [InlineKeyboardButton("📅 Today", callback_data='show_today')],
         [InlineKeyboardButton("☕ Caffeine Check", callback_data='caffeine_check')],
         [InlineKeyboardButton("🍽️ Meal Advice", callback_data='meal_check')],
         [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
         [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
+        [InlineKeyboardButton("📋 Report", callback_data='report_command')],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -681,10 +682,11 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
             f"**Light reminders:** {', '.join(brightness_times)}\n\n"
             f"I'll notify you before each important time!\n\n"
             f"**Commands:**\n"
-            f"/schedule - View today's schedule\n"
+            f"/today - View today's schedule\n"
             f"/caffeine - Check if coffee is safe now\n"
-            f"/dayoff - Take a day off\n"
+            f"/meal- Check the meal schdeule\n"
             f"/change - Adjust for shift changes\n"
+            f"/dayoff - Take a day off\n"
             f"/report - View weekly report"
         )
 
