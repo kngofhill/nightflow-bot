@@ -1,9 +1,64 @@
+# ============================================================
+# NIGHTFLOW BOT PROJECT STRUCTURE
+# ------------------------------------------------------------
+# main.py
+#   Main entry point of the bot.
+#   Keeps the core bot logic in one place:
+#   - Telegram command handlers
+#   - callback button handlers
+#   - notification loop
+#   - helper functions that are still small enough to keep here
+#   - bot startup / polling
+#
+# db.py
+#   Database layer for Supabase.
+#   Stores reusable database functions so main.py does not need
+#   to repeat raw queries everywhere.
+#   Examples:
+#   - get user by Telegram ID
+#   - fetch active schedule
+#   - update daily schedule
+#   - insert notifications
+#
+# schedule_utils.py
+#   Pure schedule/time logic.
+#   Contains reusable functions that do calculations but do not
+#   talk to Telegram or Supabase directly.
+#   Examples:
+#   - parse time strings
+#   - format times
+#   - calculate optimal schedule
+#   - caffeine window logic
+#   - shift transition advice
+#
+# web_app.py
+#   Small Flask health server used for hosting platforms like
+#   Render / Railway so the service has a web endpoint and
+#   health check route.
+#
+# Design choice:
+#   We are not splitting the project into many tiny files yet.
+#   Small and closely related bot logic stays in main.py for speed.
+#   Bigger reusable parts are moved out:
+#   - database code -> db.py
+#   - scheduling logic -> schedule_utils.py
+#   - health/web server -> web_app.py
+#
+# Rule of thumb:
+#   If a function is mostly about Telegram flow, keep it in main.py.
+#   If a function is reused or is mostly database logic, move it to db.py.
+#   If a function is pure time/schedule calculation, move it to schedule_utils.py.
+# ============================================================
+
+
 import os
 import traceback
 import logging
 import json
 import re
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
+
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -42,6 +97,34 @@ from schedule_utils import (
 )
 
 from web_app import start_web_server
+DEFAULT_TIMEZONE = "Asia/Tashkent"
+
+def get_timezone_name_from_user_row(user_row: dict) -> str:
+    tz = user_row.get("timezone")
+    return tz if tz else DEFAULT_TIMEZONE
+
+def get_user_now_from_timezone_name(timezone_name: str) -> datetime:
+    try:
+        return datetime.now(ZoneInfo(timezone_name))
+    except Exception:
+        return datetime.now(ZoneInfo(DEFAULT_TIMEZONE))
+
+def combine_local_date_and_time(local_date, time_value, timezone_name: str) -> datetime | None:
+    t = str_to_time(str(time_value)) if time_value else None
+    if not t:
+        return None
+    return datetime.combine(local_date, t, tzinfo=ZoneInfo(timezone_name))
+
+def get_next_local_time_occurrence(time_str: str, timezone_name: str, now_local: datetime) -> datetime | None:
+    t = str_to_time(time_str)
+    if not t:
+        return None
+
+    candidate = datetime.combine(now_local.date(), t, tzinfo=ZoneInfo(timezone_name))
+    if candidate < now_local:
+        candidate += timedelta(days=1)
+    return candidate
+
 
 load_dotenv()
 
@@ -71,8 +154,8 @@ def get_active_schedule_or_none(user_id: str):
     return result.data[0]
 
 
-def get_today_daily_schedule_or_none(user_id: str):
-    today = str(datetime.now().date())
+def get_today_daily_schedule_or_none(user_id: str, timezone_name: str):
+    today = str(get_user_now_from_timezone_name(timezone_name).date())
     result = (
         supabase_client.table("daily_schedules")
         .select("*")
@@ -84,62 +167,68 @@ def get_today_daily_schedule_or_none(user_id: str):
         return None
     return result.data[0]
 
-
-def build_caffeine_message(schedule: dict) -> str:
-    sleep_start = str_to_time(schedule.get("sleep_start"))
+def build_caffeine_message(schedule: dict, timezone_name: str) -> str:
+    sleep_start = str_to_time(str(schedule.get("sleep_start")))
     if not sleep_start:
         return "Sleep schedule not configured properly."
 
-    now = datetime.now().time()
-    sleep_start_dt = datetime.combine(date.today(), sleep_start)
-    now_dt = datetime.combine(date.today(), now)
+    now_local = get_user_now_from_timezone_name(timezone_name)
 
-    if sleep_start_dt <= now_dt:
+    sleep_start_dt = datetime.combine(
+        now_local.date(),
+        sleep_start,
+        tzinfo=ZoneInfo(timezone_name)
+    )
+
+    if sleep_start_dt <= now_local:
         sleep_start_dt += timedelta(days=1)
 
     cutoff_dt = sleep_start_dt - timedelta(hours=6)
 
-    if is_within_caffeine_window(sleep_start, now):
-        minutes_left = int((cutoff_dt - now_dt).total_seconds() / 60)
-
-        if minutes_left > 0:
-            return (
-                f"⚠️ **Caffeine Warning**\n\n"
-                f"You have {minutes_left} minutes left for caffeine today.\n"
-                f"After {cutoff_dt.strftime('%H:%M')}, caffeine will disrupt your sleep.\n\n"
-                f"Last call: {cutoff_dt.strftime('%H:%M')}"
-            )
-
+    if now_local < cutoff_dt:
+        minutes_left = int((cutoff_dt - now_local).total_seconds() / 60)
+        return (
+            f"✅ **Safe for caffeine**\n\n"
+            f"You're outside the 6-hour sleep window.\n"
+            f"You have about {minutes_left} minutes left.\n\n"
+            f"Last call: {cutoff_dt.strftime('%H:%M')}"
+        )
+    else:
         return (
             f"🚫 **Caffeine window closed**\n\n"
             f"You're within 6 hours of your sleep time ({time_to_str(schedule['sleep_start'])}).\n"
-            f"Coffee now will make falling asleep harder.\n"
-            f"Try herbal tea or water instead."
+            f"Coffee now may make sleep harder.\n\n"
+            f"Cutoff was: {cutoff_dt.strftime('%H:%M')}"
         )
 
-    return (
-        f"✅ **Safe for caffeine**\n\n"
-        f"You're outside the 6-hour sleep window.\n"
-        f"Enjoy your coffee! Remember: last call is {cutoff_dt.strftime('%H:%M')}"
-    )
 
-
-def get_upcoming_meal(schedule: dict):
+def get_upcoming_meal(schedule: dict, timezone_name: str):
     meal_windows = safe_json_parse(schedule.get("meal_windows"))
     if not meal_windows:
         return None
 
-    now_str = datetime.now().strftime("%H:%M")
+    now_local = get_user_now_from_timezone_name(timezone_name)
+
+    best_meal = None
+    best_dt = None
 
     for meal in meal_windows:
-        if meal.get("time") and meal["time"] >= now_str:
-            return meal
+        meal_time = meal.get("time")
+        if not meal_time:
+            continue
 
-    return meal_windows[0]
+        candidate = get_next_local_time_occurrence(meal_time, timezone_name, now_local)
+        if not candidate:
+            continue
 
+        if best_dt is None or candidate < best_dt:
+            best_dt = candidate
+            best_meal = meal
 
-def set_day_off_for_today(user_id: str):
-    today = str(datetime.now().date())
+    return best_meal
+
+def set_day_off_for_today(user_id: str, timezone_name: str):
+    today = str(get_user_now_from_timezone_name(timezone_name).date())
 
     existing = (
         supabase_client.table("daily_schedules")
@@ -167,13 +256,11 @@ def set_day_off_for_today(user_id: str):
 
 
 
-
-async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: str, message: str, notification_type: str):
-    """Send notification to user and log it."""
+async def send_notification(context, user_id: str, message: str, notification_type: str, metadata: dict | None = None):
     try:
         result = (
             supabase_client.table("users")
-            .select("telegram_id")
+            .select("telegram_id, timezone")
             .eq("id", user_id)
             .execute()
         )
@@ -181,17 +268,21 @@ async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: str, me
         if not result.data:
             return
 
-        telegram_id = result.data[0]["telegram_id"]
+        user_row = result.data[0]
+        telegram_id = user_row["telegram_id"]
+        timezone_name = user_row.get("timezone") or "Asia/Tashkent"
+        now_local = get_user_now_from_timezone_name(timezone_name)
 
         await context.bot.send_message(chat_id=telegram_id, text=message)
 
         supabase_client.table("notifications").insert({
             "user_id": user_id,
             "type": notification_type,
-            "scheduled_time": datetime.now().isoformat(),
+            "scheduled_time": now_local.astimezone(ZoneInfo("UTC")).isoformat(),
             "sent": True,
-            "sent_at": datetime.now().isoformat(),
-            "message": message
+            "sent_at": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "message": message,
+            "metadata": metadata or {}
         }).execute()
 
         logger.info(f"Sent {notification_type} notification to user {user_id}")
@@ -201,115 +292,143 @@ async def send_notification(context: ContextTypes.DEFAULT_TYPE, user_id: str, me
         logger.error(traceback.format_exc())
 
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
-    """Job to check and send scheduled notifications."""
     try:
-        now = datetime.now()
-        today = now.date()
-        current_hour_min = now.strftime("%H:%M")
-
-        users_result = supabase_client.table('users').select('id')\
-            .eq('notification_enabled', True)\
+        users_result = (
+            supabase_client.table('users')
+            .select('id, telegram_id, timezone, notification_enabled')
+            .eq('notification_enabled', True)
             .execute()
+        )
 
         if not users_result.data:
             return
 
         for user in users_result.data:
             user_id = user['id']
+            timezone_name = user.get('timezone') or 'Asia/Tashkent'
+            now_local = get_user_now_from_timezone_name(timezone_name)
+            today_local = now_local.date()
+            current_hour_min = now_local.strftime("%H:%M")
 
-            # Skip if today is marked as off
-            daily_result = supabase_client.table('daily_schedules').select('*')\
-                .eq('user_id', user_id)\
-                .eq('date', str(today))\
+            daily_result = (
+                supabase_client.table('daily_schedules')
+                .select('*')
+                .eq('user_id', user_id)
+                .eq('date', str(today_local))
                 .execute()
+            )
 
-            if daily_result.data:
-                daily = daily_result.data[0]
-                if daily.get('shift_type') == 'off':
-                    continue
+            if daily_result.data and daily_result.data[0].get('shift_type') == 'off':
+                continue
 
-            schedule_result = supabase_client.table('constant_schedules').select('*')\
-                .eq('user_id', user_id)\
-                .eq('active', True)\
+            schedule_result = (
+                supabase_client.table('constant_schedules')
+                .select('*')
+                .eq('user_id', user_id)
+                .eq('active', True)
                 .execute()
+            )
 
             if not schedule_result.data:
                 continue
 
             schedule = schedule_result.data[0]
 
-            if schedule.get('coffee_windows'):
-                coffee_windows = safe_json_parse(schedule['coffee_windows'])
-                for window in coffee_windows:
-                    if window.get('time') == current_hour_min:
-                        await send_notification(
-                            context,
-                            user_id,
-                            window.get('message', 'Time for coffee!'),
-                            'coffee'
-                        )
+            coffee_windows = safe_json_parse(schedule.get('coffee_windows'))
+            meal_windows = safe_json_parse(schedule.get('meal_windows'))
+            brightness_windows = safe_json_parse(schedule.get('brightness_windows'))
 
-            if schedule.get('meal_windows'):
-                meal_windows = safe_json_parse(schedule['meal_windows'])
-                for window in meal_windows:
-                    if window.get('time') == current_hour_min:
-                        await send_notification(
-                            context,
-                            user_id,
-                            window.get('message', 'Time to eat!'),
-                            'meal'
-                        )
+            for window in coffee_windows or []:
+                if window.get('time') == current_hour_min:
+                    await send_notification_once(
+                        context, user_id, 'coffee', current_hour_min, today_local,
+                        window.get('message', 'Time for coffee!')
+                    )
 
-            if schedule.get('brightness_windows'):
-                brightness_windows = safe_json_parse(schedule['brightness_windows'])
-                for window in brightness_windows:
-                    if window.get('time') == current_hour_min:
-                        await send_notification(
-                            context,
-                            user_id,
-                            window.get('message', 'Light reminder!'),
-                            'brightness'
-                        )
+            for window in meal_windows or []:
+                if window.get('time') == current_hour_min:
+                    await send_notification_once(
+                        context, user_id, 'meal', current_hour_min, today_local,
+                        window.get('message', 'Time to eat!')
+                    )
 
-            if schedule.get('sleep_start'):
-                sleep_start = str_to_time(schedule['sleep_start'])
-                if sleep_start:
-                    sleep_dt = datetime.combine(today, sleep_start)
-                    if sleep_dt <= now:
-                        sleep_dt += timedelta(days=1)
+            for window in brightness_windows or []:
+                if window.get('time') == current_hour_min:
+                    await send_notification_once(
+                        context, user_id, 'brightness', current_hour_min, today_local,
+                        window.get('message', 'Light reminder!')
+                    )
 
-                    reminder_dt = sleep_dt - timedelta(minutes=30)
-                    if reminder_dt.strftime("%H:%M") == current_hour_min:
-                        await send_notification(
-                            context,
-                            user_id,
-                            f"😴 30 minutes until sleep time ({schedule['sleep_start']}). Start winding down.",
-                            'sleep'
-                        )
+            sleep_start = schedule.get('sleep_start')
+            sleep_dt = combine_local_date_and_time(today_local, sleep_start, timezone_name)
+
+            if sleep_dt:
+                if sleep_dt <= now_local:
+                    sleep_dt += timedelta(days=1)
+
+                reminder_dt = sleep_dt - timedelta(minutes=30)
+                if reminder_dt.strftime("%H:%M") == current_hour_min:
+                    await send_notification_once(
+                        context,
+                        user_id,
+                        'sleep',
+                        current_hour_min,
+                        today_local,
+                        f"😴 30 minutes until sleep time ({schedule['sleep_start']}). Start winding down."
+                    )
 
     except Exception as e:
         logger.error(f"Error in scheduled notifications: {e}")
         logger.error(traceback.format_exc())
+async def send_notification_once(context, user_id: str, notification_type: str, hhmm: str, local_date, message: str):
+    try:
+        already = (
+            supabase_client.table("notifications")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("type", notification_type)
+            .eq("sent", True)
+            .contains("metadata", {"slot": hhmm, "local_date": str(local_date)})
+            .execute()
+        )
 
+        if already.data:
+            return
+
+        await send_notification(
+            context=context,
+            user_id=user_id,
+            message=message,
+            notification_type=notification_type,
+            metadata={"slot": hhmm, "local_date": str(local_date)}
+        )
+    except Exception as e:
+        logger.error(f"Error in send_notification_once: {e}")
+        logger.error(traceback.format_exc())
 async def caffeine_advice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        user_id = get_user_id(update.effective_user.id)
-        if not user_id:
+        result = supabase_client.table("users").select("id, timezone").eq("telegram_id", update.effective_user.id).execute()
+        if not result.data:
             await update.message.reply_text("Please use /start first to set up your account!")
             return
+
+        user_row = result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone", "Asia/Tashkent")
 
         schedule = get_active_schedule_or_none(user_id)
         if not schedule:
             await update.message.reply_text("Please set up your schedule first using /start")
             return
 
-        msg = build_caffeine_message(schedule)
+        msg = build_caffeine_message(schedule, timezone_name)
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
     except Exception as e:
         logger.error(f"Error in caffeine_advice: {e}")
         logger.error(traceback.format_exc())
         await update.message.reply_text("Sorry, couldn't check caffeine safety.")
+
 def build_main_menu():
     """Build main menu keyboard."""
     keyboard = [
@@ -319,7 +438,7 @@ def build_main_menu():
         [InlineKeyboardButton("🔄 Change Shift", callback_data='change_shift_help')],
         [InlineKeyboardButton("😴 Day Off", callback_data='day_off')],
         [InlineKeyboardButton("⚙️ Settings", callback_data='settings')],
-        [InlineKeyboardButton("📋 Report", callback_data='report_command')],
+        [InlineKeyboardButton("📋 Report", callback_data='view_report')],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -359,7 +478,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_user = result.data[0]
 
-        update_last_active(user.id, datetime.now().isoformat())
+        update_last_active(db_user['id'], datetime.now().isoformat())
 
         const_result = supabase_client.table('constant_schedules').select('id')\
             .eq('user_id', db_user['id'])\
@@ -407,14 +526,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Sorry, something went wrong. Please try again.")
 
 async def send_today_summary(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Send a user-friendly summary of today's plan."""
     try:
-        user_id = get_user_id(telegram_user_id)
-        if not user_id:
+        user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", telegram_user_id).execute()
+        if not user_result.data:
             await context.bot.send_message(chat_id=chat_id, text="Please use /start first to set up your account!")
             return
 
-        today = datetime.now().date()
+        user_row = user_result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+        now_local = get_user_now_from_timezone_name(timezone_name)
+        today = now_local.date()
 
         daily_result = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
@@ -506,19 +629,24 @@ async def send_today_summary(chat_id: int, telegram_user_id: int, context: Conte
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show today's summary."""
     await send_today_summary(update.effective_chat.id, update.effective_user.id, context)
+
 async def meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        user_id = get_user_id(update.effective_user.id)
-        if not user_id:
+        result = supabase_client.table("users").select("id, timezone").eq("telegram_id", update.effective_user.id).execute()
+        if not result.data:
             await update.message.reply_text("Please use /start first to set up your account!")
             return
+
+        user_row = result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
 
         schedule = get_active_schedule_or_none(user_id)
         if not schedule:
             await update.message.reply_text("Please set up your schedule first using /start")
             return
 
-        upcoming = get_upcoming_meal(schedule)
+        upcoming = get_upcoming_meal(schedule, timezone_name)
         if not upcoming:
             await update.message.reply_text("No meal reminders found yet.")
             return
@@ -615,14 +743,15 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
         if not work_start or not work_end:
             raise ValueError("Invalid time format")
 
-        user_result = supabase_client.table('users').select('id').eq('telegram_id', update.effective_user.id).execute()
+        user_result = supabase_client.table('users').select('id, timezone').eq('telegram_id', update.effective_user.id).execute()
         if not user_result.data:
             await update.message.reply_text("User not found. Please use /start again.")
             return ConversationHandler.END
 
-        user_id = user_result.data[0]['id']
+        user_row = user_result.data[0]
+        user_id = user_row['id']
+        timezone_name = user_row.get('timezone') or DEFAULT_TIMEZONE
         optimized = calculate_optimal_schedule(work_start, work_end)
-
         supabase_client.table('constant_schedules').update({'active': False})\
             .eq('user_id', user_id)\
             .eq('active', True)\
@@ -641,7 +770,8 @@ async def save_constant_schedule(update: Update, context: ContextTypes.DEFAULT_T
             'active': True
         }).execute()
 
-        today = datetime.now().date()
+        now_local = get_user_now_from_timezone_name(timezone_name)
+        today = now_local.date()
 
         existing = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
@@ -754,14 +884,18 @@ async def save_rotating_schedule(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def send_schedule_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Send today's schedule to a chat."""
     try:
-        user_id = get_user_id(telegram_user_id)
-        if not user_id:
+        user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", telegram_user_id).execute()
+        if not user_result.data:
             await context.bot.send_message(chat_id=chat_id, text="Please use /start first to set up your account!")
             return
 
-        today = datetime.now().date()
+        user_row = user_result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+        now_local = get_user_now_from_timezone_name(timezone_name)
+        today = now_local.date()
 
         schedule_result = supabase_client.table('daily_schedules').select('*')\
             .eq('user_id', user_id)\
@@ -808,14 +942,17 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_schedule_message(update.effective_chat.id, update.effective_user.id, context)
 
 async def dayoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle day off requests."""
     try:
-        user_id = get_user_id(update.effective_user.id)
-        if not user_id:
+        result = supabase_client.table("users").select("id, timezone").eq("telegram_id", update.effective_user.id).execute()
+        if not result.data:
             await update.message.reply_text("Please use /start first!")
             return
 
-        set_day_off_for_today(user_id)
+        user_row = result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+        set_day_off_for_today(user_id, timezone_name)
 
         keyboard = [
             [InlineKeyboardButton("Resume Tomorrow", callback_data='resume_tomorrow')],
@@ -935,14 +1072,18 @@ async def change_shift_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def send_report_message(chat_id: int, telegram_user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Send weekly report to a chat."""
     try:
-        user_id = get_user_id(telegram_user_id)
-        if not user_id:
+        user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", telegram_user_id).execute()
+        if not user_result.data:
             await context.bot.send_message(chat_id=chat_id, text="Please use /start first!")
             return
 
-        end_date = datetime.now().date()
+        user_row = user_result.data[0]
+        user_id = user_row["id"]
+        timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+        now_local = get_user_now_from_timezone_name(timezone_name)
+        end_date = now_local.date()
         start_date = end_date - timedelta(days=7)
 
         result = (
@@ -1038,31 +1179,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif query.data == 'caffeine_check':
-            user_id = get_user_id(query.from_user.id)
-            if not user_id:
+            user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", query.from_user.id).execute()
+            if not user_result.data:
                 await query.message.reply_text("Please use /start first to set up your account!")
                 return
+
+            user_row = user_result.data[0]
+            user_id = user_row["id"]
+            timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
 
             schedule = get_active_schedule_or_none(user_id)
             if not schedule:
                 await query.message.reply_text("Please set up your schedule first using /start")
                 return
 
-            msg = build_caffeine_message(schedule)
+            msg = build_caffeine_message(schedule, timezone_name)
             await query.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
         elif query.data == 'meal_check':
-            user_id = get_user_id(query.from_user.id)
-            if not user_id:
+            user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", query.from_user.id).execute()
+            if not user_result.data:
                 await query.message.reply_text("Please use /start first to set up your account!")
                 return
+
+            user_row = user_result.data[0]
+            user_id = user_row["id"]
+            timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
 
             schedule = get_active_schedule_or_none(user_id)
             if not schedule:
                 await query.message.reply_text("Please set up your schedule first using /start")
                 return
 
-            upcoming = get_upcoming_meal(schedule)
+            upcoming = get_upcoming_meal(schedule, timezone_name)
             if not upcoming:
                 await query.message.reply_text("No meal reminders found yet.")
                 return
@@ -1075,12 +1224,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif query.data == 'day_off':
-            user_id = get_user_id(query.from_user.id)
-            if not user_id:
+            user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", query.from_user.id).execute()
+            if not user_result.data:
                 await query.message.reply_text("Please use /start first!")
                 return
 
-            set_day_off_for_today(user_id)
+            user_row = user_result.data[0]
+            user_id = user_row["id"]
+            timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+            set_day_off_for_today(user_id, timezone_name)
 
             keyboard = [
                 [InlineKeyboardButton("Resume Tomorrow", callback_data='resume_tomorrow')],
@@ -1142,12 +1295,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("Okay, I'll keep today as a day off. Use /schedule to update when you're ready.")
 
         elif query.data == 'back_to_work':
-            user_id = get_user_id(query.from_user.id)
-            if not user_id:
+            user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", query.from_user.id).execute()
+            if not user_result.data:
                 await query.edit_message_text("Please use /start first!")
                 return
 
-            today = datetime.now().date()
+            user_row = user_result.data[0]
+            user_id = user_row["id"]
+            timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+
+            now_local = get_user_now_from_timezone_name(timezone_name)
+            today = now_local.date()
             const_result = supabase_client.table('constant_schedules').select('*')\
                 .eq('user_id', user_id)\
                 .eq('active', True)\
@@ -1196,8 +1354,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shift_time = query.data.replace('update_shift_', '')
             if '-' in shift_time:
                 start_str, end_str = shift_time.split('-')
+                user_result = supabase_client.table("users").select("id, timezone").eq("telegram_id", query.from_user.id).execute()
+                if not user_result.data:
+                    await query.edit_message_text("Please use /start first!")
+                    return
 
-                user_id = get_user_id(query.from_user.id)
+                user_row = user_result.data[0]
+                user_id = user_row["id"]
+                timezone_name = user_row.get("timezone") or DEFAULT_TIMEZONE
+                
                 if user_id:
                     work_start = str_to_time(start_str)
                     work_end = str_to_time(end_str)
@@ -1223,7 +1388,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             'active': True
                         }).execute()
 
-                        today = datetime.now().date()
+                        now_local = get_user_now_from_timezone_name(timezone_name)
+                        today = now_local.date()
                         existing = supabase_client.table('daily_schedules').select('*')\
                             .eq('user_id', user_id)\
                             .eq('date', str(today))\
