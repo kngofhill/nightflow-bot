@@ -1562,7 +1562,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_last_active(user.id, datetime.now().isoformat())
 
     # Mini‑app button
-    keyboard = [[InlineKeyboardButton("🌙 Open Nightflow", web_app={"url": "nightflow-bot-production.up.railway.app"})]]
+    keyboard = [[InlineKeyboardButton("🌙 Open Nightflow", web_app={"url": "https://nightflow-bot-production.up.railway.app"})]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
