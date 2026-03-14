@@ -1,2 +1,2 @@
-bot: python bot/main.py
+bot: python -m bot.main
 web: gunicorn api.app:app
