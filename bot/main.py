@@ -1525,6 +1525,7 @@ import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
+from telegram import MenuButtonWebApp, WebAppInfo
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -1669,25 +1670,39 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
 
-def main():
-    token = os.getenv('TELEGRAM_TOKEN')
-    if not token:
-        logger.error("No TELEGRAM_TOKEN")
-        return
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pause", pause))
-    app.add_handler(CommandHandler("resume", resume))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Welcome message - menu button already opens mini-app."""
+    user = update.effective_user
+    logger.info(f"Start command from user {user.id}")
+    
+    # Ensure user exists in DB
+    db_user = get_user_by_telegram_id(user.id)
+    if not db_user:
+        upsert_user(user.id, user.username, user.first_name, None)
+    update_last_active(user.id, datetime.now().isoformat())
 
-    if app.job_queue:
-        app.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+    # Simple welcome message (no button needed since menu button exists)
+    await update.message.reply_text(
+        f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
+        f"Use the menu button below ⬇️ to open the app.\n\n"
+        f"Commands:\n"
+        f"/pause - Pause notifications\n"
+        f"/resume - Resume notifications"
+    )
 
-    logger.info("Bot started")
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
+async def post_init(application: Application):
+    """Set menu button after bot starts."""
+    try:
+        await application.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="🌙 Nightflow",
+                web_app=WebAppInfo(url="https://nightflow-bot-production.up.railway.app")
+            )
+        )
+        logger.info("✅ Menu button set successfully")
+    except Exception as e:
+        logger.error(f"Failed to set menu button: {e}")
 
 
 
