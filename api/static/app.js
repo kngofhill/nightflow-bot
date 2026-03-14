@@ -1,4 +1,4 @@
-const API_BASE = 'https://your-backend-url.com/api/v1'; // Replace with your Railway URL
+const API_BASE = 'nightflow-bot-production.up.railway.app'; // Replace with your Railway URL
 
 const tg = window.Telegram.WebApp;
 tg.expand();
