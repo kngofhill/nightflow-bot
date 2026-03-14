@@ -1553,24 +1553,6 @@ load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message with a button that opens the mini‑app."""
-    user = update.effective_user
-    # Ensure user exists in DB (if not, create a placeholder)
-    db_user = get_user_by_telegram_id(user.id)
-    if not db_user:
-        upsert_user(user.id, user.username, user.first_name, None)
-    update_last_active(user.id, datetime.now().isoformat())
-
-    # Mini‑app button
-    keyboard = [[InlineKeyboardButton("🌙 Open Nightflow", web_app={"url": "https://nightflow-bot-production.up.railway.app"})]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        f"Welcome, {user.first_name}! Click below to open the Nightflow mini‑app.",
-        reply_markup=reply_markup
-    )
-
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pause notifications."""
     user_id = update.effective_user.id
@@ -1670,7 +1652,6 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message - menu button already opens mini-app."""
     user = update.effective_user
@@ -1704,5 +1685,25 @@ async def post_init(application: Application):
     except Exception as e:
         logger.error(f"Failed to set menu button: {e}")
 
+def main():
+    token = os.getenv('TELEGRAM_TOKEN')
+    if not token:
+        logger.error("No TELEGRAM_TOKEN")
+        return
 
+    # Create application with post_init
+    app = Application.builder().token(token).post_init(post_init).build()
+    
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("pause", pause))
+    app.add_handler(CommandHandler("resume", resume))
 
+    if app.job_queue:
+        app.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+
+    logger.info("Bot started")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
