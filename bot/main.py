@@ -1525,6 +1525,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
 import asyncio
+import traceback 
 
 from telegram import Update, MenuButtonWebApp, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
