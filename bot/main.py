@@ -1683,17 +1683,9 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
 async def post_init(application: Application):
     """Set menu button after bot starts."""
     try:
-        # Get your Railway app URL
         app_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'nightflow-bot-production.up.railway.app')
         
-        # REMOVE or COMMENT OUT these lines - let run_webhook handle it!
-        # await application.bot.delete_webhook(drop_pending_updates=True)
-        # await application.bot.set_webhook(
-        #     url=f"https://{app_url}/webhook",
-        #     allowed_updates=Update.ALL_TYPES
-        # )
-        
-        # ONLY set the menu button
+        # ONLY set the menu button - let run_webhook handle the webhook
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="🌙 Nightflow",
@@ -1703,7 +1695,7 @@ async def post_init(application: Application):
         logger.info("✅ Menu button set successfully")
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
-        
+
 def main():
     """Start the bot with webhook."""
     token = os.getenv('TELEGRAM_TOKEN')
@@ -1726,13 +1718,19 @@ def main():
 
     logger.info("🚀 Nightflow bot starting with webhook...")
     
-    # Start webhook
+    # Get the full webhook URL
+    app_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'nightflow-bot-production.up.railway.app')
+    webhook_full_url = f"https://{app_url}/webhook"
+    
+    # Start webhook with FULL URL
     port = int(os.getenv("PORT", 8080))
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
-        secret_token=None,  # Optional: add a secret token for security
-        webhook_url="/webhook"  # This will be appended to the base URL
+        url_path="webhook",  # Just the path part
+        webhook_url=webhook_full_url,  # The FULL URL Telegram should call
+        secret_token=None,
+        allowed_updates=Update.ALL_TYPES
     )
 
 if __name__ == '__main__':
