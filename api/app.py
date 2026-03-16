@@ -164,10 +164,13 @@ def test():
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
     """Handle incoming Telegram updates via webhook."""
-    from bot.main import application  # Import your bot application
-    
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
+    try:
+        update = Update.de_json(request.get_json(), application.bot)
+        asyncio.run(application.process_update(update))
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return 'Error', 500
     
     return 'ok', 200
 @app.route('/<path:path>')
