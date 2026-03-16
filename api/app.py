@@ -73,37 +73,37 @@ def validate_init_data(init_data: str) -> bool:
         logger.error(f"Validation error: {str(e)}", exc_info=True)
         return False
 
-@app.before_request
-def verify_telegram_data():
-    """Protect API routes with proper error handling."""
-    # Skip verification for non-API routes
-    if not request.path.startswith('/api/'):
-        return
+# @app.before_request
+# def verify_telegram_data():
+#     """Protect API routes with proper error handling."""
+#     # Skip verification for non-API routes
+#     if not request.path.startswith('/api/'):
+#         return
     
-    # Special case for health check
-    if request.path == '/api/health':
-        return
+#     # Special case for health check
+#     if request.path == '/api/health':
+#         return
     
-    auth = request.headers.get('Authorization')
-    logger.info(f"Auth header: {auth[:50] if auth else 'None'}...")
+#     auth = request.headers.get('Authorization')
+#     logger.info(f"Auth header: {auth[:50] if auth else 'None'}...")
     
-    if not auth or not auth.startswith('Telegram '):
-        logger.warning(f"Missing or invalid auth header for {request.path}")
-        return jsonify({
-            "error": "Unauthorized",
-            "message": "Missing or invalid Authorization header"
-        }), 401
+#     if not auth or not auth.startswith('Telegram '):
+#         logger.warning(f"Missing or invalid auth header for {request.path}")
+#         return jsonify({
+#             "error": "Unauthorized",
+#             "message": "Missing or invalid Authorization header"
+#         }), 401
     
-    init_data = auth[9:]  # Remove 'Telegram ' prefix
+#     init_data = auth[9:]  # Remove 'Telegram ' prefix
     
-    if not validate_init_data(init_data):
-        logger.warning(f"Invalid init_data for {request.path}")
-        return jsonify({
-            "error": "Invalid data",
-            "message": "Telegram data validation failed"
-        }), 403
+#     if not validate_init_data(init_data):
+#         logger.warning(f"Invalid init_data for {request.path}")
+#         return jsonify({
+#             "error": "Invalid data",
+#             "message": "Telegram data validation failed"
+#         }), 403
     
-    logger.info(f"Authentication successful for {request.path}")
+#     logger.info(f"Authentication successful for {request.path}")
 
 # Register blueprints
 app.register_blueprint(users.bp)

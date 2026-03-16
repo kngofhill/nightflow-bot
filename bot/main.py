@@ -1520,6 +1520,7 @@
 
 # bot/main.py
 import os
+import asyncio
 import logging
 import traceback
 from datetime import datetime, timedelta
@@ -1685,14 +1686,39 @@ async def post_init(application: Application):
     except Exception as e:
         logger.error(f"Failed to set menu button: {e}")
 
+async def clear_bot_connections(application: Application):
+    """Clear any existing webhooks or polling connections."""
+    try:
+        # Delete any webhook and drop pending updates
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook cleared, pending updates dropped")
+        
+        # Also try to get updates to reset any polling
+        await application.bot.get_updates(offset=-1)
+        logger.info("✅ Polling reset")
+    except Exception as e:
+        logger.error(f"Error clearing connections: {e}")
+
+# Modify your main() function:
 def main():
     token = os.getenv('TELEGRAM_TOKEN')
     if not token:
         logger.error("No TELEGRAM_TOKEN")
         return
 
-    # Create application with post_init
-    app = Application.builder().token(token).post_init(post_init).build()
+    # Create application
+    app = Application.builder().token(token).build()
+    
+    # Run initialization
+    async def initialize():
+        await clear_bot_connections(app)
+        await post_init(app)
+    
+    # Run the initialization
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(initialize())
     
     # Add handlers
     app.add_handler(CommandHandler("start", start))
