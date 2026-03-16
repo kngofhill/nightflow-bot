@@ -1520,18 +1520,17 @@
 
 # bot/main.py
 import os
-import asyncio
 import logging
 import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
-from telegram import MenuButtonWebApp, WebAppInfo
+import asyncio
+
+from telegram import Update, MenuButtonWebApp, WebAppInfo
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.constants import ParseMode
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1540,7 +1539,6 @@ from shared.db import (
     get_user_by_telegram_id,
     upsert_user,
     update_last_active,
-    get_users_with_notifications_enabled,
     insert_notification,
 )
 from shared.time_utils import (
@@ -1553,6 +1551,25 @@ from shared.schedule_utils import safe_json_parse
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Welcome message - menu button already opens mini-app."""
+    user = update.effective_user
+    logger.info(f"Start command from user {user.id}")
+    
+    # Ensure user exists in DB
+    db_user = get_user_by_telegram_id(user.id)
+    if not db_user:
+        upsert_user(user.id, user.username, user.first_name, None)
+    update_last_active(user.id, datetime.now().isoformat())
+
+    await update.message.reply_text(
+        f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
+        f"Use the menu button below ⬇️ to open the app.\n\n"
+        f"Commands:\n"
+        f"/pause - Pause notifications\n"
+        f"/resume - Resume notifications"
+    )
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pause notifications."""
@@ -1567,7 +1584,7 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Notifications resumed.")
 
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
-    """Background job – exactly as you had, but using shared functions."""
+    """Background job for notifications."""
     try:
         users_result = (
             supabase_client.table('users')
@@ -1585,7 +1602,7 @@ async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
             today_local = now_local.date()
             current_hour_min = now_local.strftime("%H:%M")
 
-            # Check if today is a day off (daily override)
+            # Check if today is a day off
             daily = supabase_client.table('daily_schedules').select('shift_type').eq('user_id', user_id).eq('date', str(today_local)).execute()
             if daily.data and daily.data[0].get('shift_type') == 'off':
                 continue
@@ -1653,29 +1670,14 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome message - menu button already opens mini-app."""
-    user = update.effective_user
-    logger.info(f"Start command from user {user.id}")
-    
-    # Ensure user exists in DB
-    db_user = get_user_by_telegram_id(user.id)
-    if not db_user:
-        upsert_user(user.id, user.username, user.first_name, None)
-    update_last_active(user.id, datetime.now().isoformat())
-
-    # Simple welcome message (no button needed since menu button exists)
-    await update.message.reply_text(
-        f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
-        f"Use the menu button below ⬇️ to open the app.\n\n"
-        f"Commands:\n"
-        f"/pause - Pause notifications\n"
-        f"/resume - Resume notifications"
-    )
-
 async def post_init(application: Application):
     """Set menu button after bot starts."""
     try:
+        # First, ensure no webhook is set
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook cleared")
+        
+        # Set menu button
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="🌙 Nightflow",
@@ -1684,52 +1686,38 @@ async def post_init(application: Application):
         )
         logger.info("✅ Menu button set successfully")
     except Exception as e:
-        logger.error(f"Failed to set menu button: {e}")
+        logger.error(f"Failed to initialize: {e}")
 
-async def clear_bot_connections(application: Application):
-    """Clear any existing webhooks or polling connections."""
-    try:
-        # Delete any webhook and drop pending updates
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook cleared, pending updates dropped")
-        
-        # Also try to get updates to reset any polling
-        await application.bot.get_updates(offset=-1)
-        logger.info("✅ Polling reset")
-    except Exception as e:
-        logger.error(f"Error clearing connections: {e}")
-
-# Modify your main() function:
 def main():
+    """Start the bot."""
     token = os.getenv('TELEGRAM_TOKEN')
     if not token:
         logger.error("No TELEGRAM_TOKEN")
         return
 
     # Create application
-    app = Application.builder().token(token).build()
-    
-    # Run initialization
-    async def initialize():
-        await clear_bot_connections(app)
-        await post_init(app)
-    
-    # Run the initialization
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(initialize())
+    application = Application.builder().token(token).post_init(post_init).build()
     
     # Add handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pause", pause))
-    app.add_handler(CommandHandler("resume", resume))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("pause", pause))
+    application.add_handler(CommandHandler("resume", resume))
 
-    if app.job_queue:
-        app.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+    # Schedule notifications
+    if application.job_queue:
+        application.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+        logger.info("✅ Notification scheduler started")
 
-    logger.info("Bot started")
-    app.run_polling()
+    logger.info("🚀 Nightflow bot is running...")
+    
+    # Start polling
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        traceback.print_exc()
