@@ -145,13 +145,22 @@ def api_health():
 def serve_frontend():
     """Serve the mini-app frontend."""
     try:
-        return send_from_directory('static', 'index.html')
+        # Look in the correct directory
+        return send_from_directory('api/static', 'index.html')
     except Exception as e:
         logger.error(f"Error serving frontend: {e}")
-        return jsonify({
-            "error": "Frontend not found",
-            "message": "Static files may be missing"
-        }), 404
+        # Try alternative path
+        try:
+            return send_from_directory('static', 'index.html')
+        except:
+            return jsonify({
+                "error": "Frontend not found",
+                "message": "Static files may be missing"
+            }), 404
+
+@app.route('/test')
+def test():
+    return jsonify({"status": "ok", "message": "API is working"}), 200
 
 @app.route('/<path:path>')
 def serve_static(path):
