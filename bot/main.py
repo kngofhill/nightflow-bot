@@ -1521,7 +1521,6 @@
 # bot/main.py
 import os
 import logging
-import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
@@ -1529,6 +1528,7 @@ import asyncio
 
 from telegram import Update, MenuButtonWebApp, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import MessageHandler, filters
 
 from dotenv import load_dotenv
 
@@ -1552,6 +1552,7 @@ load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Your existing command handlers (start, pause, resume) remain the same
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message - menu button already opens mini-app."""
     user = update.effective_user
@@ -1583,8 +1584,16 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     supabase_client.table("users").update({"notification_enabled": True}).eq("telegram_id", user_id).execute()
     await update.message.reply_text("Notifications resumed.")
 
+# Webhook handler - this will receive all updates from Telegram
+async def webhook_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming webhook updates."""
+    # This will be called automatically when Telegram sends an update
+    # Your existing message handlers will process the update
+    pass
+
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
     """Background job for notifications."""
+    # Your existing notification code - unchanged
     try:
         users_result = (
             supabase_client.table('users')
@@ -1671,17 +1680,28 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
         logger.error(f"Error sending notification: {e}")
 
 async def post_init(application: Application):
-    """Set menu button after bot starts."""
+    """Set menu button and webhook after bot starts."""
     try:
-        # First, ensure no webhook is set
+        # Get your Railway app URL
+        app_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'nightflow-bot-production.up.railway.app')
+        webhook_url = f"https://{app_url}/webhook"
+        
+        # Delete any existing webhook
         await application.bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook cleared")
+        
+        # Set the new webhook
+        await application.bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=Update.ALL_TYPES
+        )
+        logger.info(f"✅ Webhook set to {webhook_url}")
         
         # Set menu button
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="🌙 Nightflow",
-                web_app=WebAppInfo(url="https://nightflow-bot-production.up.railway.app")
+                web_app=WebAppInfo(url=f"https://{app_url}")
             )
         )
         logger.info("✅ Menu button set successfully")
@@ -1689,7 +1709,7 @@ async def post_init(application: Application):
         logger.error(f"Failed to initialize: {e}")
 
 def main():
-    """Start the bot."""
+    """Start the bot with webhook."""
     token = os.getenv('TELEGRAM_TOKEN')
     if not token:
         logger.error("No TELEGRAM_TOKEN")
@@ -1708,10 +1728,16 @@ def main():
         application.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
         logger.info("✅ Notification scheduler started")
 
-    logger.info("🚀 Nightflow bot is running...")
+    logger.info("🚀 Nightflow bot starting with webhook...")
     
-    # Start polling
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start webhook
+    port = int(os.getenv("PORT", 8080))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        secret_token=None,  # Optional: add a secret token for security
+        webhook_url="/webhook"  # This will be appended to the base URL
+    )
 
 if __name__ == '__main__':
     try:

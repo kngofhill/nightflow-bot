@@ -161,7 +161,15 @@ def serve_frontend():
 @app.route('/test')
 def test():
     return jsonify({"status": "ok", "message": "API is working"}), 200
-
+@app.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    """Handle incoming Telegram updates via webhook."""
+    from bot.main import application  # Import your bot application
+    
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    asyncio.run(application.process_update(update))
+    
+    return 'ok', 200
 @app.route('/<path:path>')
 def serve_static(path):
     """Serve static files."""
