@@ -1681,24 +1681,19 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
         logger.error(f"Error sending notification: {e}")
 
 async def post_init(application: Application):
-    """Set menu button and webhook after bot starts."""
+    """Set menu button after bot starts."""
     try:
         # Get your Railway app URL
         app_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'nightflow-bot-production.up.railway.app')
-        webhook_url = f"https://{app_url}/webhook"
         
-        # Delete any existing webhook
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook cleared")
+        # REMOVE or COMMENT OUT these lines - let run_webhook handle it!
+        # await application.bot.delete_webhook(drop_pending_updates=True)
+        # await application.bot.set_webhook(
+        #     url=f"https://{app_url}/webhook",
+        #     allowed_updates=Update.ALL_TYPES
+        # )
         
-        # Set the new webhook
-        await application.bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=Update.ALL_TYPES
-        )
-        logger.info(f"✅ Webhook set to {webhook_url}")
-        
-        # Set menu button
+        # ONLY set the menu button
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="🌙 Nightflow",
@@ -1708,7 +1703,7 @@ async def post_init(application: Application):
         logger.info("✅ Menu button set successfully")
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
-
+        
 def main():
     """Start the bot with webhook."""
     token = os.getenv('TELEGRAM_TOKEN')
