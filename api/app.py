@@ -15,6 +15,7 @@ from config import TELEGRAM_TOKEN
 from api.routes import users, schedules
 import sys
 import traceback
+import asyncio
 
 # Add this right after your imports
 print("🚀 Starting Flask app...")
