@@ -13,6 +13,16 @@ from flask_cors import CORS
 
 from config import TELEGRAM_TOKEN
 from api.routes import users, schedules
+import sys
+import traceback
+
+# Add this right after your imports
+print("🚀 Starting Flask app...")
+print(f"Python version: {sys.version}")
+print(f"Current directory: {os.getcwd()}")
+print(f"Files in current dir: {os.listdir('.')}")
+print(f"Files in api directory: {os.listdir('api') if os.path.exists('api') else 'api not found'}")
+print(f"Files in api/static directory: {os.listdir('api/static') if os.path.exists('api/static') else 'static not found'}")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -106,8 +116,14 @@ def validate_init_data(init_data: str) -> bool:
 #     logger.info(f"Authentication successful for {request.path}")
 
 # Register blueprints
-app.register_blueprint(users.bp)
-app.register_blueprint(schedules.bp)
+try:
+    # Register blueprints
+    app.register_blueprint(users.bp)
+    app.register_blueprint(schedules.bp)
+    print("✅ Blueprints registered successfully")
+except Exception as e:
+    print(f"❌ Error registering blueprints: {e}")
+    traceback.print_exc()
 
 @app.route('/health')
 def health():
