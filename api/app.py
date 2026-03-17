@@ -146,18 +146,25 @@ def api_health():
 def serve_frontend():
     """Serve the mini-app frontend."""
     try:
-        # Look in the correct directory
-        return send_from_directory('api/static', 'index.html')
+        # Try multiple possible paths
+        possible_paths = ['api/static/index.html', 'static/index.html', 'index.html']
+        
+        for path in possible_paths:
+            try:
+                return send_from_directory(os.path.dirname(path), os.path.basename(path))
+            except:
+                continue
+        
+        # If none work, list available files for debugging
+        static_dir = os.path.join(os.path.dirname(__file__), 'static')
+        files = os.listdir(static_dir) if os.path.exists(static_dir) else []
+        return jsonify({
+            "error": "Frontend not found",
+            "message": f"Looking in: {static_dir}, found: {files}"
+        }), 404
     except Exception as e:
         logger.error(f"Error serving frontend: {e}")
-        # Try alternative path
-        try:
-            return send_from_directory('static', 'index.html')
-        except:
-            return jsonify({
-                "error": "Frontend not found",
-                "message": "Static files may be missing"
-            }), 404
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/test')
 def test():
@@ -176,15 +183,24 @@ def telegram_webhook():
     return 'ok', 200
 @app.route('/<path:path>')
 def serve_static(path):
-    """Serve static files."""
+    """Serve static files (JS, CSS, etc.)"""
     try:
-        return send_from_directory('static', path)
+        # Try multiple paths
+        possible_paths = [
+            os.path.join('api/static', path),
+            os.path.join('static', path),
+            path
+        ]
+        
+        for static_path in possible_paths:
+            full_path = os.path.join(os.path.dirname(__file__), '..', static_path)
+            if os.path.exists(full_path):
+                return send_from_directory(os.path.dirname(full_path), os.path.basename(full_path))
+        
+        return jsonify({"error": f"File not found: {path}"}), 404
     except Exception as e:
         logger.error(f"Error serving static file {path}: {e}")
-        return jsonify({
-            "error": "File not found",
-            "message": f"Could not find {path}"
-        }), 404
+        return jsonify({"error": str(e)}), 404
 
 # Error handlers
 @app.errorhandler(404)
