@@ -125,7 +125,14 @@ try:
 except Exception as e:
     print(f"❌ Error registering blueprints: {e}")
     traceback.print_exc()
-
+@app.route('/api/test', methods=['GET'])
+def test_api():
+    """Test endpoint to verify API is working."""
+    return jsonify({
+        "status": "ok",
+        "message": "API is working",
+        "timestamp": datetime.now().isoformat()
+    }), 200
 @app.route('/health')
 def health():
     """Health check endpoint."""
