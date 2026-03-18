@@ -1,2 +1,2 @@
-web: python api/test_app.py
-# bot: python bot/main.py   (comment out for now)
+web: python -m flask run --host=0.0.0.0 --port=8080
+bot: python bot/main.py
