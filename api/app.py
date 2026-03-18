@@ -47,7 +47,9 @@ def validate_init_data(init_data: str) -> bool:
     except Exception as e:
         logger.error(f"Validation error: {e}")
         return False
-
+@app.route('/ping')
+def ping():
+    return "pong", 200
 @app.before_request
 def verify_telegram_data():
     """Protect API routes."""

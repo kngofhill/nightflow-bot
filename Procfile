@@ -1,2 +1,2 @@
-web: gunicorn api.app:app --bind 0.0.0.0:8080
+web: python -m flask run --host=0.0.0.0 --port=8080
 bot: python bot/main.py
