@@ -2,6 +2,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import date
 import sys
+import json  
 sys.path.append('.')
 
 from shared.db import supabase_client, get_user_id
