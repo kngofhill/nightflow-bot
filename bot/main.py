@@ -1681,21 +1681,23 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
         logger.error(f"Error sending notification: {e}")
 
 async def post_init(application: Application):
-    """Set menu button after bot starts."""
+    """Set menu button and ensure we're in polling mode."""
     try:
-        app_url = os.getenv('RAILWAY_PUBLIC_DOMAIN', 'nightflow-bot-production.up.railway.app')
+        # IMPORTANT: Delete any existing webhook FIRST
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook deleted - forcing polling mode")
         
-        # ONLY set the menu button - let run_webhook handle the webhook
+        # Then set menu button (this doesn't affect polling)
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="🌙 Nightflow",
-                web_app=WebAppInfo(url=f"https://{app_url}")
+                web_app=WebAppInfo(url="https://nightflow-bot-production.up.railway.app")
             )
         )
         logger.info("✅ Menu button set successfully")
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
-
+        
 def main():
     """Start the bot with webhook."""
     token = os.getenv('TELEGRAM_TOKEN')
