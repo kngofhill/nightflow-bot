@@ -268,55 +268,64 @@ async function showSchedule() {
         
         const schedule = await response.json();
         
-        // Build a clean message (no markdown, just plain text with emojis)
+        // Build simple message without special characters
         let message = "📅 YOUR FULL SCHEDULE\n\n";
-        message += "═══ SHIFT ═══\n";
-        message += `${schedule.shift_type.toUpperCase()} SHIFT\n\n`;
+        message += "SHIFT: " + schedule.shift_type.toUpperCase() + "\n";
+        message += "WORK: " + formatTime(schedule.work_start) + " → " + formatTime(schedule.work_end) + "\n";
+        message += "SLEEP: " + formatTime(schedule.sleep_start) + " → " + formatTime(schedule.sleep_end) + "\n\n";
         
-        message += "═══ WORK ═══\n";
-        message += `${formatTime(schedule.work_start)} → ${formatTime(schedule.work_end)}\n\n`;
-        
-        message += "═══ SLEEP ═══\n";
-        message += `${formatTime(schedule.sleep_start)} → ${formatTime(schedule.sleep_end)}\n\n`;
-        
-        message += "☕ COFFEE TIMES\n";
+        message += "☕ COFFEE TIMES:\n";
         if (schedule.coffee_windows && schedule.coffee_windows.length > 0) {
             schedule.coffee_windows.forEach(w => {
-                message += `• ${w.time}  ${w.message.replace('☕', '').trim()}\n`;
+                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
             });
         } else {
             message += "• No coffee times set\n";
         }
         
-        message += "\n🍽️ MEAL TIMES\n";
+        message += "\n🍽️ MEAL TIMES:\n";
         if (schedule.meal_windows && schedule.meal_windows.length > 0) {
             schedule.meal_windows.forEach(w => {
-                message += `• ${w.time}  ${w.message.replace('🍽️', '').replace('🥗', '').replace('🍌', '').trim()}\n`;
+                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
             });
         } else {
             message += "• No meal times set\n";
         }
         
-        message += "\n💡 LIGHT REMINDERS\n";
+        message += "\n💡 LIGHT REMINDERS:\n";
         if (schedule.brightness_windows && schedule.brightness_windows.length > 0) {
             schedule.brightness_windows.forEach(w => {
-                message += `• ${w.time}  ${w.message.replace('☀️', '').replace('🌙', '').replace('📵', '').replace('🕶️', '').trim()}\n`;
+                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
             });
         } else {
             message += "• No light reminders set\n";
         }
         
-        tg.showPopup({
-            title: '📋 Full Schedule',
-            message: message,
-            buttons: [{type: 'ok', text: 'Got it'}]
-        });
+        tg.showAlert(message);
     } catch (error) {
-        tg.showAlert(`Error: ${error.message}`);
+        tg.showAlert("Error: " + error.message);
+    }
+}
+async function showCaffeineCheck() {
+    try {
+        const response = await fetch(`${API_BASE}/schedules/caffeine/check?telegram_id=${user.id}`, {
+            headers: {
+                'Authorization': `Telegram ${tg.initData}`
+            }
+        });
+        
+        if (!response.ok) {
+            tg.showAlert('Error: ' + response.status);
+            return;
+        }
+        
+        const data = await response.json();
+        tg.showAlert(data.message);
+    } catch (error) {
+        tg.showAlert('Could not check caffeine status');
         console.error(error);
     }
 }
-
 async function setDayOff() {
     tg.showPopup({
         title: 'Set Day Off',
