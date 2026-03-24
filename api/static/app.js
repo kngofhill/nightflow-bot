@@ -268,40 +268,46 @@ async function showSchedule() {
         
         const schedule = await response.json();
         
-        // Build simple message without special characters
-        let message = "📅 YOUR FULL SCHEDULE\n\n";
-        message += "SHIFT: " + schedule.shift_type.toUpperCase() + "\n";
-        message += "WORK: " + formatTime(schedule.work_start) + " → " + formatTime(schedule.work_end) + "\n";
-        message += "SLEEP: " + formatTime(schedule.sleep_start) + " → " + formatTime(schedule.sleep_end) + "\n\n";
+        // Part 1: Basic info
+        let basicInfo = "📅 YOUR FULL SCHEDULE\n\n";
+        basicInfo += `SHIFT: ${schedule.shift_type.toUpperCase()}\n`;
+        basicInfo += `WORK: ${formatTime(schedule.work_start)} → ${formatTime(schedule.work_end)}\n`;
+        basicInfo += `SLEEP: ${formatTime(schedule.sleep_start)} → ${formatTime(schedule.sleep_end)}\n`;
+        tg.showAlert(basicInfo);
         
-        message += "☕ COFFEE TIMES:\n";
+        // Part 2: Coffee times
+        let coffeeMsg = "☕ COFFEE TIMES\n";
         if (schedule.coffee_windows && schedule.coffee_windows.length > 0) {
             schedule.coffee_windows.forEach(w => {
-                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
+                coffeeMsg += `${w.time} - ${w.message.replace('☕', '').trim()}\n`;
             });
         } else {
-            message += "• No coffee times set\n";
+            coffeeMsg += "No coffee times set\n";
         }
+        tg.showAlert(coffeeMsg);
         
-        message += "\n🍽️ MEAL TIMES:\n";
+        // Part 3: Meal times
+        let mealMsg = "🍽️ MEAL TIMES\n";
         if (schedule.meal_windows && schedule.meal_windows.length > 0) {
             schedule.meal_windows.forEach(w => {
-                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
+                mealMsg += `${w.time} - ${w.message.replace('🍽️', '').replace('🥗', '').replace('🍌', '').trim()}\n`;
             });
         } else {
-            message += "• No meal times set\n";
+            mealMsg += "No meal times set\n";
         }
+        tg.showAlert(mealMsg);
         
-        message += "\n💡 LIGHT REMINDERS:\n";
+        // Part 4: Light reminders
+        let lightMsg = "💡 LIGHT REMINDERS\n";
         if (schedule.brightness_windows && schedule.brightness_windows.length > 0) {
             schedule.brightness_windows.forEach(w => {
-                message += "• " + w.time + " - " + w.message.replace(/[☕🥗🍌☀️🌙📵🕶️]/g, '').trim() + "\n";
+                lightMsg += `${w.time} - ${w.message.replace('☀️', '').replace('🌙', '').replace('📵', '').replace('🕶️', '').trim()}\n`;
             });
         } else {
-            message += "• No light reminders set\n";
+            lightMsg += "No light reminders set\n";
         }
+        tg.showAlert(lightMsg);
         
-        tg.showAlert(message);
     } catch (error) {
         tg.showAlert("Error: " + error.message);
     }
