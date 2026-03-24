@@ -161,51 +161,10 @@ def caffeine_check():
     # Calculate if within 6 hours of sleep
     now = datetime.now()
     
-    # Parse sleep time
-    sleep_time = datetime.strptime(sleep_start, "%H:%M")
-    sleep_dt = datetime(now.year, now.month, now.day, sleep_time.hour, sleep_time.minute)
-    
-    # If sleep time is earlier than now, it's for tomorrow
-    if sleep_dt <= now:
-        sleep_dt = sleep_dt + timedelta(days=1)
-    
-    cutoff = sleep_dt - timedelta(hours=6)
-    
-    if now >= cutoff:
-        minutes_until_sleep = int((sleep_dt - now).total_seconds() / 60)
-        hours = minutes_until_sleep // 60
-        mins = minutes_until_sleep % 60
-        message = f"🚫 **Caffeine window closed!**\n\nYou're within 6 hours of sleep.\nSleep starts at {sleep_start} (in {hours}h {mins}m).\nCoffee now may disrupt your sleep."
-    else:
-        minutes_left = int((cutoff - now).total_seconds() / 60)
-        hours_left = minutes_left // 60
-        mins_left = minutes_left % 60
-        message = f"✅ **Safe for caffeine!**\n\nYou have {hours_left}h {mins_left}m left before the 6-hour sleep window closes.\nLast call: {cutoff.strftime('%H:%M')}"
-    
-    return jsonify({"message": message})@bp.route('/caffeine/check', methods=['GET'])
-def caffeine_check():
-    """Check if it's safe to drink coffee."""
-    user_id, err = get_user_from_request()
-    if err:
-        return jsonify({"error": err}), 400
-    
-    # Get user's schedule
-    const = supabase_client.table('constant_schedules').select('*').eq('user_id', user_id).eq('active', True).execute()
-    if not const.data:
-        return jsonify({"message": "No schedule found. Please set up your schedule first."}), 404
-    
-    schedule = const.data[0]
-    sleep_start = schedule.get('sleep_start')
-    
-    if not sleep_start:
-        return jsonify({"message": "Sleep time not set in schedule."}), 400
-    
-    # Calculate if within 6 hours of sleep
-    now = datetime.now()
-    
-    # Parse sleep time (handle string format)
+    # Parse sleep time (handle both string and time objects)
     if isinstance(sleep_start, str):
-        sleep_time = datetime.strptime(sleep_start[:5], "%H:%M")
+        sleep_start_str = sleep_start[:5]  # Get "HH:MM"
+        sleep_time = datetime.strptime(sleep_start_str, "%H:%M")
     else:
         sleep_time = sleep_start
     
@@ -221,7 +180,7 @@ def caffeine_check():
         minutes_until_sleep = int((sleep_dt - now).total_seconds() / 60)
         hours = minutes_until_sleep // 60
         mins = minutes_until_sleep % 60
-        message = f"🚫 **Caffeine window closed!**\n\nYou're within 6 hours of sleep.\nSleep starts at {sleep_start[:5]} (in {hours}h {mins}m).\nCoffee now may disrupt your sleep."
+        message = f"🚫 **Caffeine window closed!**\n\nYou're within 6 hours of sleep.\nSleep starts at {sleep_start_str if isinstance(sleep_start, str) else sleep_start.strftime('%H:%M')} (in {hours}h {mins}m).\nCoffee now may disrupt your sleep."
     else:
         minutes_left = int((cutoff - now).total_seconds() / 60)
         hours_left = minutes_left // 60
