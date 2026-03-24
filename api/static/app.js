@@ -1,5 +1,7 @@
+console.log("showSchedule function exists:", typeof showSchedule);
+console.log("showCaffeineCheck function exists:", typeof showCaffeineCheck);
+console.log("setDayOff function exists:", typeof setDayOff);
 const API_BASE = 'https://nightflow-bot-production.up.railway.app/api/v1';
-
 const tg = window.Telegram.WebApp;
 tg.expand();
 tg.ready();
