@@ -255,6 +255,8 @@ async function saveConstantSchedule() {
 
 async function showSchedule() {
     try {
+        tg.showAlert("Loading full schedule...");
+        
         const response = await fetch(`${API_BASE}/schedules/full?telegram_id=${user.id}`, {
             headers: {
                 'Authorization': `Telegram ${tg.initData}`
@@ -262,18 +264,19 @@ async function showSchedule() {
         });
         
         if (!response.ok) {
-            throw new Error('Failed to fetch');
+            tg.showAlert(`Error: ${response.status} - ${response.statusText}`);
+            return;
         }
         
         const schedule = await response.json();
         
         // Build full schedule message
         let message = "📅 *Your Full Schedule*\n\n";
-        message += `*Shift:* ${schedule.shift_type.toUpperCase()}\n`;
-        message += `*Work:* ${formatTime(schedule.work_start)} - ${formatTime(schedule.work_end)}\n`;
-        message += `*Sleep:* ${formatTime(schedule.sleep_start)} - ${formatTime(schedule.sleep_end)}\n\n`;
+        message += `Shift: ${schedule.shift_type.toUpperCase()}\n`;
+        message += `Work: ${formatTime(schedule.work_start)} - ${formatTime(schedule.work_end)}\n`;
+        message += `Sleep: ${formatTime(schedule.sleep_start)} - ${formatTime(schedule.sleep_end)}\n\n`;
         
-        message += "*☕ Coffee Times:*\n";
+        message += "☕ Coffee Times:\n";
         if (schedule.coffee_windows && schedule.coffee_windows.length > 0) {
             schedule.coffee_windows.forEach(w => {
                 message += `• ${w.time} - ${w.message}\n`;
@@ -282,7 +285,7 @@ async function showSchedule() {
             message += "• No coffee times set\n";
         }
         
-        message += "\n*🍽️ Meal Times:*\n";
+        message += "\n🍽️ Meal Times:\n";
         if (schedule.meal_windows && schedule.meal_windows.length > 0) {
             schedule.meal_windows.forEach(w => {
                 message += `• ${w.time} - ${w.message}\n`;
@@ -291,7 +294,7 @@ async function showSchedule() {
             message += "• No meal times set\n";
         }
         
-        message += "\n*💡 Light Reminders:*\n";
+        message += "\n💡 Light Reminders:\n";
         if (schedule.brightness_windows && schedule.brightness_windows.length > 0) {
             schedule.brightness_windows.forEach(w => {
                 message += `• ${w.time} - ${w.message}\n`;
@@ -306,31 +309,7 @@ async function showSchedule() {
             buttons: [{type: 'ok'}]
         });
     } catch (error) {
-        tg.showAlert('Could not load full schedule');
-        console.error(error);
-    }
-}
-
-async function showCaffeineCheck() {
-    try {
-        const response = await fetch(`${API_BASE}/schedules/caffeine/check?telegram_id=${user.id}`, {
-            headers: {
-                'Authorization': `Telegram ${tg.initData}`
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to fetch');
-        }
-        
-        const data = await response.json();
-        tg.showPopup({
-            title: 'Caffeine Check',
-            message: data.message,
-            buttons: [{type: 'ok'}]
-        });
-    } catch (error) {
-        tg.showAlert('Could not check caffeine status');
+        tg.showAlert(`Error: ${error.message}`);
         console.error(error);
     }
 }
