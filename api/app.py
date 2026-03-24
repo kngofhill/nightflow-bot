@@ -50,21 +50,21 @@ def validate_init_data(init_data: str) -> bool:
 @app.route('/ping')
 def ping():
     return "pong", 200
-@app.before_request
-def verify_telegram_data():
-    """Protect API routes."""
-    if not request.path.startswith('/api/'):
-        return
+# @app.before_request
+# def verify_telegram_data():
+#     """Protect API routes."""
+#     if not request.path.startswith('/api/'):
+#         return
     
-    if request.path == '/api/health' or request.path == '/api/test':
-        return
+#     if request.path == '/api/health' or request.path == '/api/test':
+#         return
     
-    auth = request.headers.get('Authorization')
-    if not auth or not auth.startswith('Telegram '):
-        return jsonify({"error": "Unauthorized"}), 401
+#     auth = request.headers.get('Authorization')
+#     if not auth or not auth.startswith('Telegram '):
+#         return jsonify({"error": "Unauthorized"}), 401
     
-    if not validate_init_data(auth[9:]):
-        return jsonify({"error": "Invalid data"}), 403
+#     if not validate_init_data(auth[9:]):
+#         return jsonify({"error": "Invalid data"}), 403
 
 # Register blueprints
 app.register_blueprint(users.bp)
