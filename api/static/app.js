@@ -14,7 +14,7 @@ if (!user) {
 async function loadToday() {
     showLoading();
     try {
-        const response = await fetch(`${API_BASE}/schedules/daily/today?telegram_id=${user.id}`, {
+        const response = await fetch(`${API_BASE}/schedules/full?telegram_id=${user.id}`, {
             headers: {
                 'Authorization': `Telegram ${tg.initData}`
             }
