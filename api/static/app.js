@@ -251,18 +251,120 @@ async function saveConstantSchedule() {
     }
 }
 
-function showSchedule() {
-    alert('Full schedule view coming soon!');
-}
-
-function showCaffeineCheck() {
-    alert('Caffeine check coming soon!');
-}
-
-function setDayOff() {
-    if (confirm('Set today as a day off?')) {
-        alert('Day off set! (Feature coming soon)');
+async function showSchedule() {
+    try {
+        const response = await fetch(`${API_BASE}/schedules/full?telegram_id=${user.id}`, {
+            headers: {
+                'Authorization': `Telegram ${tg.initData}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch');
+        }
+        
+        const schedule = await response.json();
+        
+        // Build full schedule message
+        let message = "📅 *Your Full Schedule*\n\n";
+        message += `*Shift:* ${schedule.shift_type.toUpperCase()}\n`;
+        message += `*Work:* ${formatTime(schedule.work_start)} - ${formatTime(schedule.work_end)}\n`;
+        message += `*Sleep:* ${formatTime(schedule.sleep_start)} - ${formatTime(schedule.sleep_end)}\n\n`;
+        
+        message += "*☕ Coffee Times:*\n";
+        if (schedule.coffee_windows && schedule.coffee_windows.length > 0) {
+            schedule.coffee_windows.forEach(w => {
+                message += `• ${w.time} - ${w.message}\n`;
+            });
+        } else {
+            message += "• No coffee times set\n";
+        }
+        
+        message += "\n*🍽️ Meal Times:*\n";
+        if (schedule.meal_windows && schedule.meal_windows.length > 0) {
+            schedule.meal_windows.forEach(w => {
+                message += `• ${w.time} - ${w.message}\n`;
+            });
+        } else {
+            message += "• No meal times set\n";
+        }
+        
+        message += "\n*💡 Light Reminders:*\n";
+        if (schedule.brightness_windows && schedule.brightness_windows.length > 0) {
+            schedule.brightness_windows.forEach(w => {
+                message += `• ${w.time} - ${w.message}\n`;
+            });
+        } else {
+            message += "• No light reminders set\n";
+        }
+        
+        tg.showPopup({
+            title: 'Full Schedule',
+            message: message,
+            buttons: [{type: 'ok'}]
+        });
+    } catch (error) {
+        tg.showAlert('Could not load full schedule');
+        console.error(error);
     }
+}
+
+async function showCaffeineCheck() {
+    try {
+        const response = await fetch(`${API_BASE}/schedules/caffeine/check?telegram_id=${user.id}`, {
+            headers: {
+                'Authorization': `Telegram ${tg.initData}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch');
+        }
+        
+        const data = await response.json();
+        tg.showPopup({
+            title: 'Caffeine Check',
+            message: data.message,
+            buttons: [{type: 'ok'}]
+        });
+    } catch (error) {
+        tg.showAlert('Could not check caffeine status');
+        console.error(error);
+    }
+}
+
+async function setDayOff() {
+    tg.showPopup({
+        title: 'Set Day Off',
+        message: 'Set today as a day off? Notifications will be paused.',
+        buttons: [
+            {type: 'cancel', text: 'No'},
+            {type: 'default', text: 'Yes'}
+        ]
+    }, async (buttonId) => {
+        if (buttonId === 1) { // Yes button
+            try {
+                const response = await fetch(`${API_BASE}/schedules/dayoff?telegram_id=${user.id}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Telegram ${tg.initData}`
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                if (response.ok) {
+                    tg.showAlert('✅ Day off set! No notifications today.');
+                    loadToday(); // Refresh to show day off view
+                } else {
+                    tg.showAlert('Error setting day off');
+                }
+            } catch (error) {
+                tg.showAlert('Network error');
+                console.error(error);
+            }
+        }
+    });
 }
 
 // Pull to refresh
