@@ -97,6 +97,7 @@ def today_daily():
     user_id, err = get_user_from_request()
     if err:
         return jsonify({"error": err}), 400
+    
     # Get user timezone
     user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
@@ -112,13 +113,15 @@ def today_daily():
     const = supabase_client.table('constant_schedules').select('*').eq('user_id', user_id).eq('active', True).execute()
     if not const.data:
         return jsonify({"error": "No schedule"}), 404
+    
     sched = const.data[0]
     sched['date'] = today
-    # Parse JSON fields for response
+    
+    # Parse JSON fields - THIS IS THE KEY FIX!
     for field in ['coffee_windows', 'meal_windows', 'brightness_windows']:
         sched[field] = safe_json_parse(sched.get(field))
+    
     return jsonify(sched)
-
 # ==================== NEW ENDPOINTS ====================
 
 @bp.route('/full', methods=['GET'])
