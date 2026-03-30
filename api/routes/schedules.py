@@ -44,12 +44,22 @@ def create_constant():
     if not work_start or not work_end:
         return jsonify({"error": "Invalid work hours"}), 400
 
+    opt_sleep_start = str_to_time(data.get('sleep_start'))
+    opt_sleep_end = str_to_time(data.get('sleep_end'))
+    if bool(opt_sleep_start) != bool(opt_sleep_end):
+        return jsonify({"error": "Provide both sleep_start and sleep_end, or neither"}), 400
+
     # Get user timezone
     user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
 
     # Calculate optimal schedule
-    optimized = calculate_optimal_schedule(work_start, work_end)
+    optimized = calculate_optimal_schedule(
+        work_start,
+        work_end,
+        opt_sleep_start,
+        opt_sleep_end,
+    )
 
     # Deactivate old active schedule
     supabase_client.table('constant_schedules').update({'active': False}).eq('user_id', user_id).eq('active', True).execute()

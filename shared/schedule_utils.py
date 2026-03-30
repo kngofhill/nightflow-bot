@@ -45,7 +45,12 @@ def safe_json_parse(data: Any) -> Any:
     return data
 
 
-def calculate_optimal_schedule(work_start: time, work_end: time) -> Dict[str, Any]:
+def calculate_optimal_schedule(
+    work_start: time,
+    work_end: time,
+    sleep_start_override: Optional[time] = None,
+    sleep_end_override: Optional[time] = None,
+) -> Dict[str, Any]:
     today = date.today()
     work_start_dt = datetime.combine(today, work_start)
     work_end_dt = datetime.combine(today, work_end)
@@ -60,10 +65,15 @@ def calculate_optimal_schedule(work_start: time, work_end: time) -> Dict[str, An
     else:
         shift_type = "day"
 
-    if shift_type == "night":
-        sleep_start = work_end_dt.time()
-        wake_dt = work_start_dt - timedelta(hours=1, minutes=30)
-        sleep_end = wake_dt.time()
+    if sleep_start_override and sleep_end_override:
+        sleep_start = sleep_start_override
+        sleep_end = sleep_end_override
+    elif shift_type == "night":
+        # Wind-down after shift, then 8h sleep (Nightflow spec)
+        sleep_start_dt = work_end_dt + timedelta(hours=2)
+        sleep_end_dt = sleep_start_dt + timedelta(hours=8)
+        sleep_start = sleep_start_dt.time()
+        sleep_end = sleep_end_dt.time()
     elif shift_type == "evening":
         sleep_start = time(2, 0)
         sleep_end = time(10, 0)
@@ -117,9 +127,15 @@ def calculate_optimal_schedule(work_start: time, work_end: time) -> Dict[str, An
         "action": "increase_light"
     })
 
-    sleep_start_dt = datetime.combine(today, sleep_start)
-    if sleep_start_dt <= work_end_dt and shift_type == "night":
-        sleep_start_dt += timedelta(days=1)
+    if shift_type == "night":
+        sleep_start_dt = work_end_dt + timedelta(hours=2)
+        if sleep_start_override and sleep_end_override:
+            sd = datetime.combine(work_end_dt.date(), sleep_start_override)
+            if sd <= work_end_dt:
+                sd += timedelta(days=1)
+            sleep_start_dt = sd
+    else:
+        sleep_start_dt = datetime.combine(today, sleep_start)
 
     dim_time = sleep_start_dt - timedelta(hours=2)
     brightness_windows.append({
