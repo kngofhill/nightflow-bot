@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from config import TELEGRAM_TOKEN
-from api.routes import users, schedules
+from api.routes import users, schedules, summaries, reports
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +69,8 @@ def ping():
 # Register blueprints
 app.register_blueprint(users.bp)
 app.register_blueprint(schedules.bp)
+app.register_blueprint(summaries.bp)
+app.register_blueprint(reports.bp)
 logger.info("✅ Blueprints registered")
 
 # Simple routes first

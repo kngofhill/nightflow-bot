@@ -238,3 +238,146 @@ def set_day_off():
         supabase_client.table('daily_schedules').insert(payload).execute()
     
     return jsonify({"success": True, "message": "Day off set successfully!"})
+
+
+@bp.route('/suggestions', methods=['GET'])
+def weekly_suggestions():
+    """
+    Build weekly suggestions from shift_summaries + constant schedule.
+    Minimal MVP for the final UI: show missed coffee/meal slots and sleep deficit.
+    """
+    user_id, err = get_user_from_request()
+    if err:
+        return jsonify({"error": err}), 400
+
+    # User local week (Mon-Sun)
+    user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
+    tz = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
+    now_local = get_user_now_from_timezone_name(tz)
+    local_today = now_local.date()
+    week_start = local_today - timedelta(days=local_today.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    const = supabase_client.table('constant_schedules').select('*').eq('user_id', user_id).eq('active', True).execute()
+    if not const.data:
+        return jsonify({"items": []})
+
+    schedule = const.data[0]
+    schedule['coffee_windows'] = safe_json_parse(schedule.get('coffee_windows'))
+    schedule['meal_windows'] = safe_json_parse(schedule.get('meal_windows'))
+
+    coffee_slots = schedule.get('coffee_windows') or []
+    meal_slots = schedule.get('meal_windows') or []
+
+    def time_minutes(tstr):
+        t = str_to_time(tstr)
+        if not t:
+            return 0
+        return t.hour * 60 + t.minute
+
+    coffee_slots = sorted(coffee_slots, key=lambda x: time_minutes(x.get('time')))
+    meal_slots = sorted(meal_slots, key=lambda x: time_minutes(x.get('time')))
+
+    rows = (
+        supabase_client.table('shift_summaries')
+        .select('local_date, energy, sleep_quality, responses')
+        .eq('user_id', user_id)
+        .gte('local_date', str(week_start))
+        .lte('local_date', str(week_end))
+        .execute()
+    )
+
+    def parse_responses(resp):
+        if resp is None:
+            return {}
+        if isinstance(resp, str):
+            try:
+                return json.loads(resp)
+            except Exception:
+                return {}
+        if isinstance(resp, dict):
+            return resp
+        return {}
+
+    summaries_by_date = {}
+    for r in rows.data or []:
+        summaries_by_date[str(r.get('local_date'))] = r
+
+    def slot_missed_count(slot_time, kind):
+        missed = 0
+        for i in range(7):
+            d = week_start + timedelta(days=i)
+            r = summaries_by_date.get(str(d))
+            if not r:
+                missed += 1
+                continue
+            resp = parse_responses(r.get('responses'))
+            arr = resp.get(kind) or []
+            rating = None
+            for item in arr:
+                if item and item.get('time') == slot_time:
+                    rating = item.get('rating')
+                    break
+            if rating is None:
+                missed += 1
+            else:
+                # Slider uses 1..4 (❌..✅). Treat 1 as missed.
+                if int(rating) <= 1:
+                    missed += 1
+        return missed
+
+    def shift_time_hhmm(tstr, delta_minutes):
+        t = str_to_time(tstr)
+        if not t:
+            return tstr
+        mins = (t.hour * 60 + t.minute + delta_minutes) % (24 * 60)
+        hh = mins // 60
+        mm = mins % 60
+        return f"{hh:02d}:{mm:02d}"
+
+    suggestions = []
+
+    # Top missed coffee slot
+    if coffee_slots:
+        coffee_misses = [(s.get('time'), slot_missed_count(s.get('time'), 'coffee')) for s in coffee_slots if s.get('time')]
+        coffee_misses.sort(key=lambda x: x[1], reverse=True)
+        top_time, top_missed = coffee_misses[0]
+        if top_missed >= 2:
+            suggestions.append({
+                "title": f"☕ {top_time} COFFEE",
+                "body": f"Missed {top_missed} times this week.",
+                "action": f"MOVE TO {shift_time_hhmm(top_time, -30)}",
+            })
+
+    # Top missed meal slot
+    if meal_slots:
+        meal_misses = [(s.get('time'), slot_missed_count(s.get('time'), 'meals')) for s in meal_slots if s.get('time')]
+        meal_misses.sort(key=lambda x: x[1], reverse=True)
+        top_time, top_missed = meal_misses[0]
+        if top_missed >= 2:
+            suggestions.append({
+                "title": f"🍽️ {top_time} MEAL",
+                "body": f"Missed {top_missed} times this week.",
+                "action": f"MOVE TO {shift_time_hhmm(top_time, -30)}",
+            })
+
+    # Sleep window suggestion
+    sleep_vals = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        r = summaries_by_date.get(str(d))
+        if r and r.get('sleep_quality') is not None:
+            sleep_vals.append(int(r.get('sleep_quality')))
+    if sleep_vals:
+        avg_sleep = sum(sleep_vals) / len(sleep_vals)
+        if avg_sleep <= 2:
+            deficit_hours = int(round(max(0, 2.5 - avg_sleep) * 16))
+            if deficit_hours <= 0:
+                deficit_hours = 8
+            suggestions.append({
+                "title": "😴 SLEEP WINDOW",
+                "body": f"Deficit: {deficit_hours} hours this week.",
+                "action": "ADD 30 MINUTES",
+            })
+
+    return jsonify({"items": suggestions})

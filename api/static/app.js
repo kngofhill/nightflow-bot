@@ -646,40 +646,61 @@
     }
 
     function renderSuggestions() {
-        const items = mockSuggestions();
-        $root.innerHTML = `
-            <div class="nf-screen">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bsu">← BACK</button>
-                    <h1>Suggestions</h1>
-                    <span></span>
-                </div>
-                ${items
-                    .map(
-                        (it) => `
-                    <div class="nf-suggestion">
-                        <h3>${escapeHtml(it.title)}</h3>
-                        <p>${escapeHtml(it.body)}</p>
-                        <p style="font-weight:600;">→ ${escapeHtml(it.action)}</p>
-                        <div class="nf-row-btns">
-                            <button type="button" class="nf-cta js-apply">APPLY</button>
-                            <button type="button" class="nf-cta nf-cta-secondary js-adj">ADJUST IN SETTINGS</button>
-                        </div>
-                    </div>`
-                    )
-                    .join('')}
-                <button type="button" class="nf-cta nf-cta-secondary" id="bsub">BACK TO DASHBOARD</button>
-            </div>`;
-        document.getElementById('bsu').onclick = back;
-        document.getElementById('bsub').onclick = back;
-        $root.querySelectorAll('.js-adj').forEach((b) => {
-            b.addEventListener('click', () => go('settings', true));
-        });
-        $root.querySelectorAll('.js-apply').forEach((b) => {
-            b.addEventListener('click', () => {
-                tg.showAlert('Applied (demo). Connect API to persist.');
+        $root.innerHTML = '<div class="nf-loading">Loading...</div>';
+
+        (async () => {
+            let items = mockSuggestions();
+            try {
+                const res = await api(`/schedules/suggestions?telegram_id=${user.id}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    items = data.items || data.suggestions || data || items;
+                }
+            } catch (e) {
+                console.warn('suggestions fetch failed', e);
+            }
+
+            if (!Array.isArray(items)) items = [];
+
+            $root.innerHTML = `
+                <div class="nf-screen">
+                    <div class="nf-topbar">
+                        <button type="button" class="nf-back" id="bsu">← BACK</button>
+                        <h1>Suggestions</h1>
+                        <span></span>
+                    </div>
+                    ${
+                        items.length
+                            ? items
+                                  .map(
+                                      (it) => `
+                        <div class="nf-suggestion">
+                            <h3>${escapeHtml(it.title)}</h3>
+                            <p>${escapeHtml(it.body)}</p>
+                            <p style="font-weight:600;">→ ${escapeHtml(it.action)}</p>
+                            <div class="nf-row-btns">
+                                <button type="button" class="nf-cta js-apply">APPLY</button>
+                                <button type="button" class="nf-cta nf-cta-secondary js-adj">ADJUST IN SETTINGS</button>
+                            </div>
+                        </div>`
+                                  )
+                                  .join('')
+                            : `<div class="nf-card nf-center"><div style="font-weight:600;">No suggestions this week.</div><div class="nf-muted" style="margin-top:6px;">Keep logging your day.</div></div>`
+                    }
+                    <button type="button" class="nf-cta nf-cta-secondary" id="bsub">BACK TO DASHBOARD</button>
+                </div>`;
+
+            document.getElementById('bsu').onclick = back;
+            document.getElementById('bsub').onclick = back;
+            $root.querySelectorAll('.js-adj').forEach((b) => {
+                b.addEventListener('click', () => go('settings', true));
             });
-        });
+            $root.querySelectorAll('.js-apply').forEach((b) => {
+                b.addEventListener('click', () => {
+                    tg.showAlert('Applied (demo). Connect API to persist.');
+                });
+            });
+        })();
     }
 
     function renderTransition() {
@@ -712,49 +733,65 @@
     }
 
     function renderWeekly() {
-        const w = mockWeekly();
-        $root.innerHTML = `
-            <div class="nf-screen">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bw">← BACK</button>
-                    <h1>Weekly Report</h1>
-                    <span></span>
-                </div>
-                <div class="nf-week-head">📅 ${escapeHtml(w.range)}</div>
-                <p class="nf-meter-label">ENERGY</p>
-                <div class="nf-energy-row">
-                    ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-                        .map((d, i) => `<span>${d}<br/>${w.energy[i] || '—'}</span>`)
+        $root.innerHTML = '<div class="nf-loading">Loading...</div>';
+
+        (async () => {
+            let w = mockWeekly();
+            try {
+                const res = await api(`/reports/weekly?telegram_id=${user.id}`);
+                if (res.ok) w = await res.json();
+            } catch (e) {
+                console.warn('weekly fetch failed', e);
+            }
+
+            $root.innerHTML = `
+                <div class="nf-screen">
+                    <div class="nf-topbar">
+                        <button type="button" class="nf-back" id="bw">← BACK</button>
+                        <h1>Weekly Report</h1>
+                        <span></span>
+                    </div>
+                    <div class="nf-week-head">📅 ${escapeHtml(w.range || '')}</div>
+                    <p class="nf-meter-label">ENERGY</p>
+                    <div class="nf-energy-row">
+                        ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                            .map((d, i) => `<span>${d}<br/>${w.energy?.[i] || '—'}</span>`)
+                            .join('')}
+                    </div>
+                    <p class="nf-meter-label">COFFEE</p>
+                    ${(
+                        w.coffee || []
+                    )
+                        .map(
+                            (c) => `
+                    <div class="nf-meter-row">
+                        <div class="tiny">${escapeHtml(c.label)}</div>
+                        <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
+                        <div class="tiny">${c.pct}%</div>
+                    </div>`
+                        )
                         .join('')}
-                </div>
-                <p class="nf-meter-label">COFFEE</p>
-                ${w.coffee
-                    .map(
-                        (c) => `
-                <div class="nf-meter-row">
-                    <div class="tiny">${escapeHtml(c.label)}</div>
-                    <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
-                    <div class="tiny">${c.pct}%</div>
-                </div>`
+                    <p class="nf-meter-label">MEALS</p>
+                    ${(
+                        w.meals || []
                     )
-                    .join('')}
-                <p class="nf-meter-label">MEALS</p>
-                ${w.meals
-                    .map(
-                        (c) => `
-                <div class="nf-meter-row">
-                    <div class="tiny">${escapeHtml(c.label)}</div>
-                    <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
-                    <div class="tiny">${c.pct}%</div>
-                </div>`
-                    )
-                    .join('')}
-                <p class="nf-meter-label">SLEEP</p>
-                <div class="nf-meter"><div style="width:${w.sleepPct}%"></div></div>
-                <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug">VIEW SUGGESTIONS</button>
-            </div>`;
-        document.getElementById('bw').onclick = back;
-        document.getElementById('btn-sug').onclick = () => go('suggestions', true);
+                        .map(
+                            (c) => `
+                    <div class="nf-meter-row">
+                        <div class="tiny">${escapeHtml(c.label)}</div>
+                        <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
+                        <div class="tiny">${c.pct}%</div>
+                    </div>`
+                        )
+                        .join('')}
+                    <p class="nf-meter-label">SLEEP</p>
+                    <div class="nf-meter"><div style="width:${w.sleepPct || 0}%"></div></div>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug">VIEW SUGGESTIONS</button>
+                </div>`;
+
+            document.getElementById('bw').onclick = back;
+            document.getElementById('btn-sug').onclick = () => go('suggestions', true);
+        })();
     }
 
     function renderDayOff() {
@@ -1074,13 +1111,45 @@
         $root.innerHTML = html;
         document.getElementById('bsum').onclick = back;
         document.getElementById('btn-save-sum').onclick = async () => {
+            const localDateStr = d.toISOString().slice(0, 10);
+
+            const getVal = (k) => {
+                const el = $root.querySelector(`input[data-k="${k}"]`);
+                return el ? Number(el.value) : null;
+            };
+
+            const energy = getVal('energy');
+            const sleep_quality = getVal('sleepq');
+
+            const coffee = coffees.map((c, i) => ({
+                time: c.time,
+                rating: getVal(`co-${i}`),
+            }));
+            const mealResponses = meals.map((m, i) => ({
+                time: m.time,
+                rating: getVal(`me-${i}`),
+            }));
+
+            const responses = { coffee, meals: mealResponses };
+
             try {
                 await api('/summaries', {
                     method: 'POST',
-                    json: { telegram_id: user.id, date: d.toISOString().slice(0, 10) },
+                    json: {
+                        telegram_id: user.id,
+                        date: localDateStr,
+                        energy,
+                        sleep_quality,
+                        responses,
+                    },
                 });
-            } catch (e) {}
-            tg.showAlert('Summary saved (demo until POST /summaries exists).');
+            } catch (e) {
+                console.error(e);
+                tg.showAlert('Could not save summary.');
+                return;
+            }
+
+            tg.showAlert('Saved.');
             back();
         };
     }
