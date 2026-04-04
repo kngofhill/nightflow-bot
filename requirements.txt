@@ -10,3 +10,4 @@ asgiref==3.8.1
 redis==5.0.1
 sentry-sdk[flask]==1.38.0
 pydantic>=2.7.0
+flask-limiter==3.5.0
