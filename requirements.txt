@@ -7,7 +7,6 @@ APScheduler==3.10.4
 Flask-CORS==4.0.0
 honcho==2.0.0
 asgiref==3.8.1
-flask-limiter==3.5.0
-pydantic==2.4.2
 redis==5.0.1
 sentry-sdk[flask]==1.38.0
+pydantic>=2.7.0
