@@ -16,8 +16,7 @@ def get_me():
     user_id, err = get_user_id_from_request()
     if err:
         raise APIError(err, 401)
-    
-    user = supabase_client.table('users').select('*').eq('id', user_id).execute()
+    user = supabase_client.table('users').select('*').eq('telegram_id', telegram_id).execute()    
     if not user.data:
         raise APIError("User not found", 404)
     

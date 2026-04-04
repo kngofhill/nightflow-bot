@@ -53,7 +53,7 @@ def create_constant():
         raise APIError("Provide both sleep_start and sleep_end, or neither", 400)
 
     # Get user timezone
-    user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
 
     # Calculate optimal schedule
@@ -113,7 +113,7 @@ def today_daily():
         raise APIError(err, 401)
     
     # Get user timezone
-    user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
     today = str(get_user_now_from_timezone_name(timezone).date())
 
@@ -218,7 +218,7 @@ def set_day_off():
     
     if not date_str:
         # Get user timezone
-        user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
+        user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
         timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
         date_str = str(get_user_now_from_timezone_name(timezone).date())
     
@@ -254,7 +254,7 @@ def weekly_suggestions():
         raise APIError(err, 401)
 
     # User local week (Mon-Sun)
-    user = supabase_client.table('users').select('timezone').eq('id', user_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
     tz = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
