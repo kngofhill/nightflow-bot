@@ -57,17 +57,20 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
 
 
 def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: str):
+    """Insert or update user by telegram_id."""
     return (
         supabase_client.table("users")
-        .upsert({
-            "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name,
-            "shift_type": shift_type,
-        })
+        .upsert(
+            {
+                "telegram_id": telegram_id,
+                "username": username,
+                "first_name": first_name,
+                "shift_type": shift_type,
+            },
+            on_conflict="telegram_id"  # This tells Supabase to update if exists
+        )
         .execute()
     )
-
 
 def update_last_active(telegram_id: int, timestamp_iso: str):
     return (
