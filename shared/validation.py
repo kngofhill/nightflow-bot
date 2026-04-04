@@ -8,11 +8,11 @@ class TimeWindow(BaseModel):
     message: Optional[str] = Field(None, max_length=100)
 
 class ConstantScheduleCreate(BaseModel):
-    work_start: str = Field(..., regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    work_end: str = Field(..., regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    sleep_start: Optional[str] = Field(None, regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    sleep_end: Optional[str] = Field(None, regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    shift_type: Optional[str] = Field('day', regex=r'^(day|evening|night)$')
+    work_start: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    work_end: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    sleep_start: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    sleep_end: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    shift_type: Optional[str] = Field('day', pattern=r'^(day|evening|night)$')
     coffee_windows: Optional[List[TimeWindow]] = Field(default_factory=list, max_items=5)
     meal_windows: Optional[List[TimeWindow]] = Field(default_factory=list, max_items=3)
     brightness_windows: Optional[List[TimeWindow]] = Field(default_factory=list, max_items=10)
@@ -48,17 +48,17 @@ class RotatingPatternCreate(BaseModel):
 
 class DailyScheduleUpdate(BaseModel):
     date: date
-    shift_type: str = Field(..., regex=r'^(day|evening|night|off)$')
-    work_start: Optional[str] = Field(None, regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    work_end: Optional[str] = Field(None, regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    shift_type: str = Field(..., pattern=r'^(day|evening|night|off)$')
+    work_start: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    work_end: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
 
 class UserUpdate(BaseModel):
-    timezone: Optional[str] = Field(None, regex=r'^[A-Za-z_]+/[A-Za-z_]+$')
+    timezone: Optional[str] = Field(None, pattern=r'^[A-Za-z_]+/[A-Za-z_]+$')
     notification_enabled: Optional[bool] = None
     notification_prefs: Optional[Dict[str, bool]] = None
 
 class CoffeeCheckRequest(BaseModel):
-    current_time: Optional[str] = Field(None, regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    current_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
 
 class DayOffRequest(BaseModel):
     date: Optional[date] = None
