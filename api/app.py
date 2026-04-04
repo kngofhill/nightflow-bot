@@ -10,16 +10,67 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
 
 from config import TELEGRAM_TOKEN
 from api.routes import users, schedules, summaries, reports
+from shared.auth import telegram_auth_required
+from shared.error_handling import handle_api_errors, APIError
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize Sentry (optional)
+if os.getenv('SENTRY_DSN') and os.getenv('ENVIRONMENT') == 'production':
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=os.getenv('SENTRY_DSN'),
+        integrations=[sentry_sdk.integrations.flask.FlaskIntegration()],
+        traces_sample_rate=0.1,
+        environment=os.getenv('ENVIRONMENT', 'development')
+    )
+    logger.info("Sentry initialized for error tracking")
+else:
+    logger.warning("⚠️ SENTRY_DSN not configured")
+
 app = Flask(__name__)
-CORS(app)
+
+# Security headers with Talisman
+Talisman(app, 
+    force_https=not app.debug,
+    strict_transport_security=True,
+    content_security_policy={
+        'default-src': "'self'",
+        'script-src': "'self' 'unsafe-inline' https://telegram.org",
+        'style-src': "'self' 'unsafe-inline'",
+        'img-src': "'self' data:",
+        'connect-src': "'self' https://api.telegram.org"
+    }
+)
+
+# CORS configuration - more restrictive
+CORS(app, 
+    origins=['https://t.me', 'https://web.telegram.org', 'https://nightflow-bot-production.up.railway.app'],
+    methods=['GET', 'POST', 'PUT', 'DELETE'],
+    allow_headers=['Content-Type', 'Authorization'],
+    supports_credentials=True
+)
+
+# Rate limiting
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["100 per hour", "20 per minute"],
+    storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379')
+)
+
+# Register error handlers
+handle_api_errors(app)
 
 # Get the absolute path to the api/static directory
 STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
@@ -47,24 +98,13 @@ def validate_init_data(init_data: str) -> bool:
     except Exception as e:
         logger.error(f"Validation error: {e}")
         return False
-@app.route('/ping')
-def ping():
-    return "pong", 200
-# @app.before_request
-# def verify_telegram_data():
-#     """Protect API routes."""
-#     if not request.path.startswith('/api/'):
-#         return
-    
-#     if request.path == '/api/health' or request.path == '/api/test':
-#         return
-    
-#     auth = request.headers.get('Authorization')
-#     if not auth or not auth.startswith('Telegram '):
-#         return jsonify({"error": "Unauthorized"}), 401
-    
-#     if not validate_init_data(auth[9:]):
-#         return jsonify({"error": "Invalid data"}), 403
+
+@app.before_request
+@telegram_auth_required
+def verify_telegram_data():
+    """Protect API routes with Telegram authentication."""
+    # This decorator handles authentication for all /api/ routes
+    pass
 
 # Register blueprints
 app.register_blueprint(users.bp)
@@ -74,17 +114,25 @@ app.register_blueprint(reports.bp)
 logger.info("✅ Blueprints registered")
 
 # Simple routes first
+@app.route('/ping')
+@limiter.exempt
+def ping():
+    return "pong", 200
+
 @app.route('/health')
 @app.route('/api/health')
+@limiter.exempt
 def health():
     return jsonify({"status": "ok", "message": "Nightflow API is running"}), 200
 
 @app.route('/api/test')
+@limiter.exempt
 def test():
     return jsonify({"status": "ok", "message": "API is working", "time": str(datetime.now())}), 200
 
 # Serve static files - SIMPLE AND DIRECT
 @app.route('/')
+@limiter.exempt
 def serve_index():
     """Serve the main HTML file."""
     try:
@@ -94,6 +142,7 @@ def serve_index():
         return jsonify({"error": "index.html not found", "path": STATIC_DIR}), 404
 
 @app.route('/<path:filename>')
+@limiter.exempt
 def serve_static(filename):
     """Serve all static files."""
     try:
@@ -112,4 +161,5 @@ def telegram_webhook():
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 8080))
     logger.info(f"🚀 Starting on port {port}")
+    logger.info(f"🔒 Security features enabled: Auth, Rate Limiting, CORS, CSP")
     app.run(host="0.0.0.0", port=port, debug=False)

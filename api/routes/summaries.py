@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request
 from datetime import date, datetime
 import sys
 import json
@@ -7,6 +7,9 @@ sys.path.append('.')
 
 from shared.db import supabase_client, get_user_id
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
+from shared.auth import get_user_id_from_request
+from shared.error_handling import success_response, APIError, validate_request_data
+from shared.validation import WeeklySummaryRequest
 
 bp = Blueprint('summaries', __name__, url_prefix='/api/v1')
 
@@ -26,15 +29,12 @@ def _parse_json_or_obj(v, default):
 
 @bp.route('/summaries', methods=['POST'])
 def post_shift_summary():
+    """Submit shift summary data."""
+    user_id, err = get_user_id_from_request()
+    if err:
+        raise APIError(err, 401)
+    
     payload = request.get_json(silent=True) or {}
-
-    telegram_id = payload.get('telegram_id')
-    if telegram_id is None:
-        return jsonify({"error": "telegram_id required"}), 400
-
-    user_id = get_user_id(int(telegram_id))
-    if not user_id:
-        return jsonify({"error": "User not found"}), 404
 
     # Client sends date as local calendar date (YYYY-MM-DD)
     date_str = payload.get('date') or payload.get('local_date')
@@ -47,7 +47,7 @@ def post_shift_summary():
         local_date = date.fromisoformat(str(date_str))
         local_date_str = str(local_date)
     except Exception:
-        return jsonify({"error": "Invalid date; expected YYYY-MM-DD"}), 400
+        raise APIError("Invalid date; expected YYYY-MM-DD", 400)
 
     energy = payload.get('energy')
     sleep_quality = payload.get('sleep_quality')
@@ -75,5 +75,5 @@ def post_shift_summary():
     else:
         supabase_client.table('shift_summaries').insert(row_payload).execute()
 
-    return jsonify({"success": True})
+    return success_response(None, "Summary saved successfully")
 
