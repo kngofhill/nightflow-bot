@@ -4,40 +4,39 @@ sys.path.append('.')
 
 from shared.db import supabase_client, get_user_by_telegram_id, upsert_user
 from shared.time_utils import DEFAULT_TIMEZONE
-from shared.auth import get_user_id_from_request
-from shared.error_handling import success_response, APIError, validate_request_data
-from shared.validation import UserUpdate
+from shared.error_handling import success_response, APIError
 
 bp = Blueprint('users', __name__, url_prefix='/api/v1/users')
 
 @bp.route('/me', methods=['GET'])
 def get_me():
     """Get current user profile."""
-    user_id, err = get_user_id_from_request()
-    if err:
-        raise APIError(err, 401)
-    user = supabase_client.table('users').select('*').eq('telegram_id', telegram_id).execute()    
+    telegram_id = request.args.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
+    
+    user = supabase_client.table('users').select('*').eq('telegram_id', int(telegram_id)).execute()
     if not user.data:
         raise APIError("User not found", 404)
     
     return success_response(user.data[0])
 
-@bp.route('/me', methods=['PUT'])
-@validate_request_data(UserUpdate)
-def update_me():
-    """Update current user profile."""
-    user_id, err = get_user_id_from_request()
-    if err:
-        raise APIError(err, 401)
+@bp.route('/me', methods=['POST'])
+def create_or_update():
+    """Create or update user."""
+    data = request.get_json()
+    telegram_id = data.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
     
-    validated_data = request.validated_data
-    update_data = validated_data.dict(exclude_unset=True)
+    upsert_user(
+        telegram_id=int(telegram_id),
+        username=data.get('username', ''),
+        first_name=data.get('first_name', ''),
+        shift_type=data.get('shift_type')
+    )
     
-    if not update_data:
-        raise APIError("No valid fields to update", 400)
+    if data.get('timezone'):
+        supabase_client.table('users').update({"timezone": data['timezone']}).eq("telegram_id", telegram_id).execute()
     
-    result = supabase_client.table('users').update(update_data).eq('id', user_id).execute()
-    if not result.data:
-        raise APIError("Failed to update user", 500)
-    
-    return success_response(result.data[0], "Profile updated successfully")
+    return success_response(None, "User saved successfully")
