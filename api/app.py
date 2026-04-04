@@ -63,8 +63,8 @@ CORS(app,
 
 # Rate limiting
 limiter = Limiter(
-    app,
-    key_func=get_remote_address,
+    get_remote_address,
+    app=app,
     default_limits=["100 per hour", "20 per minute"],
     storage_uri=os.getenv('REDIS_URL', 'redis://localhost:6379')
 )
