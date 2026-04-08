@@ -39,6 +39,11 @@ def create_constant():
     if err:
         raise APIError(err, 401)
     
+    # Get telegram_id from request
+    telegram_id = request.args.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
+    
     validated_data = request.validated_data
     data = validated_data.dict()
     
@@ -53,7 +58,7 @@ def create_constant():
         raise APIError("Provide both sleep_start and sleep_end, or neither", 400)
 
     # Get user timezone
-    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', int(telegram_id)).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
 
     # Calculate optimal schedule
@@ -112,8 +117,13 @@ def today_daily():
     if err:
         raise APIError(err, 401)
     
+    # Get telegram_id from request
+    telegram_id = request.args.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
+    
     # Get user timezone
-    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', int(telegram_id)).execute()
     timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
     today = str(get_user_now_from_timezone_name(timezone).date())
 
@@ -213,12 +223,17 @@ def set_day_off():
     if err:
         raise APIError(err, 401)
     
+    # Get telegram_id from request
+    telegram_id = request.args.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
+    
     validated_data = request.validated_data
     date_str = str(validated_data.date) if validated_data.date else None
     
     if not date_str:
         # Get user timezone
-        user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
+        user = supabase_client.table('users').select('timezone').eq('telegram_id', int(telegram_id)).execute()
         timezone = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
         date_str = str(get_user_now_from_timezone_name(timezone).date())
     
@@ -253,8 +268,13 @@ def weekly_suggestions():
     if err:
         raise APIError(err, 401)
 
+    # Get telegram_id from request
+    telegram_id = request.args.get('telegram_id')
+    if not telegram_id:
+        raise APIError("telegram_id required", 400)
+
     # User local week (Mon-Sun)
-    user = supabase_client.table('users').select('timezone').eq('telegram_id', telegram_id).execute()
+    user = supabase_client.table('users').select('timezone').eq('telegram_id', int(telegram_id)).execute()
     tz = user.data[0].get('timezone') if user.data else DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
