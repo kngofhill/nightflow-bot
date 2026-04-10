@@ -190,7 +190,7 @@ def main():
 
     # Schedule notifications
     if application.job_queue:
-        application.job_queue.run_repeating(check_scheduled_notifications, interval=60, first=10)
+        application.job_queue.run_repeating(check_scheduled_notifications, interval=300, first=10)
         logger.info("✅ Notification scheduler started")
 
     logger.info("🚀 Nightflow bot starting with POLLING...")
