@@ -6,9 +6,9 @@ import json
 import asyncio
 import traceback 
 
-from telegram import Update, MenuButtonWebApp, WebAppInfo
+from telegram import Update, MenuButtonWebApp, WebAppInfo, LabeledPrice
 from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.ext import MessageHandler, filters
+from telegram.ext import MessageHandler, filters, PreCheckoutQueryHandler
 
 from dotenv import load_dotenv
 
@@ -20,6 +20,14 @@ from shared.db import (
     upsert_user,
     update_last_active,
     insert_notification,
+    apply_pro_subscription_from_payment,
+    revoke_pro_subscription,
+)
+from shared.subscription import (
+    INVOICE_PAYLOAD_NIGHTFLOW_PRO,
+    PRO_PRICE_STARS,
+    SUBSCRIPTION_PERIOD_SECONDS,
+    has_pro_entitlement,
 )
 from shared.time_utils import (
     get_user_now_from_timezone_name,
@@ -47,9 +55,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
         f"Use the menu button below ⬇️ to open the app.\n\n"
+        f"🎁 New accounts get a 14-day Pro trial (full features).\n"
+        f"After that, stay on Free (today’s basics) or subscribe with {PRO_PRICE_STARS} Stars / 30 days via /subscribe.\n\n"
         f"Commands:\n"
-        f"/pause - Pause notifications\n"
-        f"/resume - Resume notifications"
+        f"/subscribe — Nightflow Pro (Telegram Stars)\n"
+        f"/pause — Pause notifications (Pro)\n"
+        f"/resume — Resume notifications"
     )
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,7 +75,59 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     supabase_client.table("users").update({"notification_enabled": True}).eq("telegram_id", user_id).execute()
     await update.message.reply_text("Notifications resumed.")
 
-# Webhook handler - this will receive all updates from Telegram
+
+class RefundedPaymentFilter(filters.BaseFilter):
+    def check_update(self, update: Update):
+        m = update.message
+        return bool(m and getattr(m, "refunded_payment", None))
+
+
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send Telegram Stars invoice for Nightflow Pro (30-day recurring)."""
+    await context.bot.send_invoice(
+        chat_id=update.effective_chat.id,
+        title="Nightflow Pro",
+        description=(
+            "Full schedule, weekly report, suggestions, settings editing, "
+            f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars per 30 days (recurring)."
+        ),
+        payload=INVOICE_PAYLOAD_NIGHTFLOW_PRO,
+        currency="XTR",
+        prices=[LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)],
+        provider_token="",
+        subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
+    )
+
+
+async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.pre_checkout_query
+    if not q:
+        return
+    if q.invoice_payload != INVOICE_PAYLOAD_NIGHTFLOW_PRO:
+        await q.answer(ok=False, error_message="Unknown product")
+        return
+    await q.answer(ok=True)
+
+
+async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sp = update.message.successful_payment if update.message else None
+    if not sp or sp.invoice_payload != INVOICE_PAYLOAD_NIGHTFLOW_PRO:
+        return
+    tid = update.effective_user.id
+    exp = sp.subscription_expiration_date
+    apply_pro_subscription_from_payment(tid, exp)
+    await update.message.reply_text("Nightflow Pro is now active. Open the mini-app to use every feature.")
+
+
+async def on_refunded_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rp = update.message.refunded_payment if update.message else None
+    if not rp or rp.invoice_payload != INVOICE_PAYLOAD_NIGHTFLOW_PRO:
+        return
+    tid = update.effective_user.id
+    revoke_pro_subscription(tid)
+    await update.message.reply_text(
+        "Your Stars payment was refunded. Pro access has been disabled immediately."
+    )
 
 
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
@@ -73,7 +136,7 @@ async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
     try:
         users_result = (
             supabase_client.table('users')
-            .select('id, telegram_id, timezone, notification_enabled')
+            .select('id, telegram_id, timezone, notification_enabled, trial_started_at, pro_expires_at')
             .eq('notification_enabled', True)
             .execute()
         )
@@ -81,6 +144,8 @@ async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
             return
 
         for user in users_result.data:
+            if not has_pro_entitlement(user):
+                continue
             user_id = user['id']
             timezone_name = user.get('timezone') or DEFAULT_TIMEZONE
             now_local = get_user_now_from_timezone_name(timezone_name)
@@ -187,6 +252,10 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("pause", pause))
     application.add_handler(CommandHandler("resume", resume))
+    application.add_handler(CommandHandler("subscribe", subscribe))
+    application.add_handler(PreCheckoutQueryHandler(precheckout))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment))
+    application.add_handler(MessageHandler(RefundedPaymentFilter(), on_refunded_payment))
 
     # Schedule notifications
     if application.job_queue:

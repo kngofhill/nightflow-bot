@@ -5,9 +5,18 @@ import sys
 sys.path.append(".")
 
 from shared.db import supabase_client, upsert_user
+from shared.subscription import subscription_meta_for_user, has_pro_entitlement
 from api.request_util import get_user_from_request
 
 bp = Blueprint("users", __name__, url_prefix="/api/v1/users")
+
+
+def _public_user_row(row):
+    if not row:
+        return row
+    out = dict(row)
+    out.update(subscription_meta_for_user(row))
+    return out
 
 
 def _normalize_notification_prefs(raw):
@@ -31,7 +40,7 @@ def get_me():
     user = supabase_client.table("users").select("*").eq("telegram_id", int(telegram_id)).execute()
     if not user.data:
         return jsonify({"error": "User not found"}), 404
-    return jsonify(user.data[0])
+    return jsonify(_public_user_row(user.data[0]))
 
 
 @bp.route("/me", methods=["PATCH"])
@@ -46,6 +55,9 @@ def patch_me():
         return jsonify({"error": "User not found"}), 404
 
     row = user.data[0]
+    if not has_pro_entitlement(row):
+        return jsonify({"error": "Nightflow Pro or active trial required to change settings", "code": "pro_required"}), 403
+
     updates = {}
 
     if "timezone" in data:
@@ -81,7 +93,7 @@ def patch_me():
 
     supabase_client.table("users").update(updates).eq("id", user_id).execute()
     refreshed = supabase_client.table("users").select("*").eq("id", user_id).execute()
-    return jsonify(refreshed.data[0])
+    return jsonify(_public_user_row(refreshed.data[0]))
 
 
 @bp.route("/me", methods=["POST"])

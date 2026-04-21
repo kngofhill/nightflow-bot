@@ -8,6 +8,7 @@ sys.path.append(".")
 from shared.db import supabase_client
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from api.request_util import get_user_from_request
+from api.subscription_access import require_pro_access
 
 bp = Blueprint("summaries", __name__, url_prefix="/api/v1")
 
@@ -30,6 +31,10 @@ def post_shift_summary():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     payload = request.get_json(silent=True) or {}
 
@@ -120,6 +125,10 @@ def post_shift_detailed():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     body = request.get_json(silent=True) or {}
     date_str = _pick(body, "date", "local_date")

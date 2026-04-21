@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from config import TELEGRAM_TOKEN
-from api.routes import users, schedules, summaries, reports
+from api.routes import users, schedules, summaries, reports, subscription
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,6 +69,7 @@ app.register_blueprint(users.bp)
 app.register_blueprint(schedules.bp)
 app.register_blueprint(summaries.bp)
 app.register_blueprint(reports.bp)
+app.register_blueprint(subscription.bp)
 logger.info("Blueprints registered")
 
 

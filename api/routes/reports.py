@@ -9,6 +9,7 @@ from shared.db import supabase_client
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.schedule_utils import safe_json_parse, str_to_time
 from api.request_util import get_user_from_request
+from api.subscription_access import require_pro_access
 
 bp = Blueprint("reports", __name__, url_prefix="/api/v1/reports")
 
@@ -41,6 +42,10 @@ def weekly_report():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     user = supabase_client.table("users").select("timezone").eq("id", user_id).execute()
     tz = user.data[0].get("timezone") if user.data else DEFAULT_TIMEZONE

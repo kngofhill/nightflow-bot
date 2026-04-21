@@ -228,7 +228,8 @@
         return m >= 0 && m <= 120;
     }
 
-    function collectEvents(schedule) {
+    function collectEvents(schedule, opts) {
+        opts = opts || {};
         const ev = [];
         const push = (time, label, icon) => {
             if (!time) return;
@@ -250,12 +251,22 @@
             push(w.time, clean(w.message) || 'Light', '💡');
         });
 
+        if (opts.basicOnly && !ev.length) {
+            push(formatTime(schedule.work_start), 'Shift starts', '🌙');
+            push(formatTime(schedule.work_end), 'Shift ends', '🏁');
+            push(formatTime(schedule.sleep_start), 'Sleep', '😴');
+        }
+
         ev.sort((a, b) => a.m - b.m);
         return ev;
     }
 
+    function hasProEntitlement() {
+        return !!(state.userRow && state.userRow.has_pro_entitlement);
+    }
+
     function getNextEvent(schedule) {
-        const raw = collectEvents(schedule);
+        const raw = collectEvents(schedule, { basicOnly: !hasProEntitlement() });
         if (!raw.length) {
             return { line: 'No upcoming events', sub: '', icon: '⏰' };
         }
@@ -290,6 +301,19 @@
     }
 
     function go(screen, pushStack) {
+        const proOnly = [
+            'full',
+            'suggestions',
+            'weekly',
+            'settings',
+            'summary',
+            'dayoff',
+            'transition',
+        ];
+        if (proOnly.includes(screen) && !hasProEntitlement()) {
+            tg.showAlert('Nightflow Pro or your free trial is required for this.');
+            return;
+        }
         if (pushStack) state.stack.push(state.screen);
         state.screen = screen;
         render();
@@ -585,7 +609,8 @@
         const today = new Date();
         const isOff = sched.shift_type === 'off';
         const st = sched.shift_type || 'night';
-        const showReport = !isOff && shouldShowReportCard(sched.work_start, sched.work_end);
+        const showReport =
+            hasProEntitlement() && !isOff && shouldShowReportCard(sched.work_start, sched.work_end);
         const next = isOff ? null : getNextEvent(sched);
         const rotating = isRotatingUi();
 
@@ -609,6 +634,17 @@
                     <p class="nf-muted nf-center" style="margin:0;">No work scheduled today. Rest up.</p>
                 </div>`;
         } else {
+            const stars = state.userRow?.pro_price_stars ?? 50;
+            const subBanner = !hasProEntitlement()
+                ? `<div class="nf-pro-banner">
+                    <div>
+                        <strong>Nightflow Pro</strong>
+                        <div class="nf-muted" style="font-size:0.78rem;margin-top:4px;">${stars} Stars / 30 days · recurring</div>
+                    </div>
+                    <button type="button" class="nf-cta nf-cta-subscribe" id="btn-subscribe">UPGRADE</button>
+                </div>`
+                : '';
+            body += subBanner;
             body += `
                 <div class="nf-card">
                     <div class="nf-shift-title ${escapeHtml(st)}">${shiftTitle(st)}</div>
@@ -621,7 +657,7 @@
                     <div class="nf-next-sub">${escapeHtml(next.sub)}</div>
                 </div>`;
 
-            if (rotating) {
+            if (rotating && hasProEntitlement()) {
                 body += `
                     <div class="nf-card nf-transition-card">
                         <div class="nf-card-label">Transition</div>
@@ -639,12 +675,16 @@
             }
         }
 
-        body += `
-                <div class="nf-bottom-nav">
+        const navInner = hasProEntitlement()
+            ? `
                     <button type="button" class="nf-nav-btn" data-nav="dayoff"><span class="nf-nav-ico">😴</span>DAY OFF</button>
                     <button type="button" class="nf-nav-btn" data-nav="full"><span class="nf-nav-ico">📅</span>FULL</button>
                     <button type="button" class="nf-nav-btn" data-nav="weekly"><span class="nf-nav-ico">📊</span>WEEKLY</button>
-                    <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>
+                    <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>`
+            : `<p class="nf-muted nf-center" style="margin:0;padding:8px 4px;font-size:0.78rem;">Full schedule, weekly report, and settings are part of Pro.</p>`;
+        body += `
+                <div class="nf-bottom-nav">
+                    ${navInner}
                 </div>
             </div>`;
 
@@ -659,6 +699,32 @@
                 if (n === 'settings') go('settings', true);
             });
         });
+
+        const subBtn = document.getElementById('btn-subscribe');
+        if (subBtn) {
+            subBtn.onclick = async () => {
+                try {
+                    const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
+                    if (!res.ok) throw new Error('x');
+                    const data = await res.json();
+                    const url = data.url;
+                    if (!url) throw new Error('x');
+                    if (typeof tg.openInvoice === 'function') {
+                        tg.openInvoice(url, (st) => {
+                            if (st === 'paid') {
+                                loadUserAndSchedule();
+                                tg.showAlert('Welcome to Nightflow Pro!');
+                            }
+                        });
+                    } else {
+                        tg.openLink(url);
+                    }
+                } catch (e) {
+                    console.warn(e);
+                    tg.showAlert('Open the bot chat and send /subscribe to pay with Stars.');
+                }
+            };
+        }
 
         const tr = document.getElementById('btn-dash-trans');
         if (tr) tr.onclick = () => go('transition', true);

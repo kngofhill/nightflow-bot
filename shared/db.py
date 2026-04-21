@@ -57,18 +57,56 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
 
 
 def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: str):
-    """Insert or update user by telegram_id."""
+    """Insert or update user by telegram_id. Preserves trial / subscription fields on update."""
+    existing = get_user_by_telegram_id(telegram_id)
+    if existing:
+        return (
+            supabase_client.table("users")
+            .update(
+                {
+                    "username": username,
+                    "first_name": first_name,
+                    "shift_type": shift_type,
+                }
+            )
+            .eq("telegram_id", telegram_id)
+            .execute()
+        )
     return (
         supabase_client.table("users")
-        .upsert(
+        .insert(
             {
                 "telegram_id": telegram_id,
                 "username": username,
                 "first_name": first_name,
                 "shift_type": shift_type,
-            },
-            on_conflict="telegram_id"  # This tells Supabase to update if exists
+            }
         )
+        .execute()
+    )
+
+
+def apply_pro_subscription_from_payment(telegram_id: int, subscription_expiration_unix: Optional[int] = None):
+    """Extend Pro access from a successful Telegram Stars subscription payment."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    upd: Dict[str, Any] = {"last_pro_payment_at": now.isoformat()}
+    if subscription_expiration_unix is not None:
+        upd["pro_expires_at"] = datetime.fromtimestamp(
+            int(subscription_expiration_unix), tz=timezone.utc
+        ).isoformat()
+    else:
+        upd["pro_expires_at"] = (now + timedelta(days=30)).isoformat()
+    return supabase_client.table("users").update(upd).eq("telegram_id", int(telegram_id)).execute()
+
+
+def revoke_pro_subscription(telegram_id: int):
+    """Immediately revoke paid Pro (e.g. Stars refund)."""
+    return (
+        supabase_client.table("users")
+        .update({"pro_expires_at": None, "last_pro_payment_at": None})
+        .eq("telegram_id", int(telegram_id))
         .execute()
     )
 

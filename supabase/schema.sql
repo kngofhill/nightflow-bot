@@ -15,12 +15,17 @@ CREATE TABLE users (
     notification_enabled BOOLEAN DEFAULT true,
     -- Per-category toggles (mini-app Settings); all optional, merge with app defaults
     notification_prefs JSONB DEFAULT '{}'::jsonb,
+    trial_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    pro_expires_at TIMESTAMP WITH TIME ZONE,
+    last_pro_payment_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX idx_users_notification ON users(notification_enabled) WHERE notification_enabled = true;
+
+CREATE INDEX idx_users_pro_expires ON users(pro_expires_at) WHERE pro_expires_at IS NOT NULL;
 
 -- ==================== CONSTANT SCHEDULES ====================
 CREATE TABLE constant_schedules (

@@ -9,6 +9,8 @@ from shared.db import supabase_client
 from shared.schedule_utils import calculate_optimal_schedule, time_to_str, str_to_time, safe_json_parse
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from api.request_util import get_user_from_request
+from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
+from shared.subscription import has_pro_entitlement
 
 bp = Blueprint("schedules", __name__, url_prefix="/api/v1/schedules")
 
@@ -80,6 +82,12 @@ def get_constant():
     for field in ("coffee_windows", "meal_windows", "brightness_windows"):
         schedule[field] = safe_json_parse(schedule.get(field))
 
+    urow = fetch_user_row_by_id(user_id)
+    if urow and not has_pro_entitlement(urow):
+        schedule["coffee_windows"] = []
+        schedule["meal_windows"] = []
+        schedule["brightness_windows"] = []
+
     return jsonify(schedule)
 
 
@@ -88,6 +96,10 @@ def patch_constant():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     data = request.get_json(silent=True) or {}
     const = (
@@ -179,6 +191,18 @@ def create_constant():
     if err:
         return err
 
+    urow = fetch_user_row_by_id(user_id)
+    if user_has_active_constant_schedule(user_id) and urow and not has_pro_entitlement(urow):
+        return (
+            jsonify(
+                {
+                    "error": "Changing your full schedule requires Nightflow Pro. Free tier keeps work & sleep for today.",
+                    "code": "pro_required",
+                }
+            ),
+            403,
+        )
+
     data = request.get_json(silent=True) or {}
     work_start = str_to_time(data.get("work_start"))
     work_end = str_to_time(data.get("work_end"))
@@ -264,13 +288,23 @@ def today_daily():
         .execute()
     )
 
+    urow = fetch_user_row_by_id(user_id)
+
+    def _strip_free_windows(row_dict):
+        if urow and not has_pro_entitlement(urow):
+            row_dict = dict(row_dict)
+            row_dict["coffee_windows"] = []
+            row_dict["meal_windows"] = []
+            row_dict["brightness_windows"] = []
+        return row_dict
+
     if daily.data:
         row = daily.data[0]
         if const.data:
             const_row = const.data[0]
             for field in ("coffee_windows", "meal_windows", "brightness_windows"):
                 row[field] = safe_json_parse(const_row.get(field))
-        return jsonify(row)
+        return jsonify(_strip_free_windows(row))
 
     if not const.data:
         return jsonify({"error": "No schedule found"}), 404
@@ -280,7 +314,7 @@ def today_daily():
     for field in ("coffee_windows", "meal_windows", "brightness_windows"):
         sched[field] = safe_json_parse(sched.get(field))
 
-    return jsonify(sched)
+    return jsonify(_strip_free_windows(sched))
 
 
 @bp.route("/full", methods=["GET"])
@@ -288,6 +322,10 @@ def full_schedule():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     const = (
         supabase_client.table("constant_schedules")
@@ -363,6 +401,10 @@ def set_day_off():
     if err:
         return err
 
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
     data = request.get_json(silent=True) or {}
     date_str = data.get("date")
     if not date_str:
@@ -401,6 +443,10 @@ def weekly_suggestions():
     user_id, err = get_user_from_request()
     if err:
         return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
 
     timezone = _user_timezone(user_id)
     now_local = get_user_now_from_timezone_name(timezone)
