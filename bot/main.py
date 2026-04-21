@@ -84,21 +84,30 @@ class RefundedPaymentFilter(filters.BaseFilter):
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Telegram Stars invoice for Nightflow Pro (30-day recurring)."""
-    # PTB 22.x send_invoice has no subscription_period kwarg; pass Bot API fields via api_kwargs.
-    await context.bot.send_invoice(
-        chat_id=update.effective_chat.id,
+    """Send Telegram Stars invoice for Nightflow Pro (50 XTR). Tries recurring; falls back to one-time if API rejects."""
+    chat_id = update.effective_chat.id
+    prices = [LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)]
+    desc = (
+        "Full schedule, weekly report, suggestions, settings editing, "
+        f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars per 30 days (recurring)."
+    )
+    common = dict(
+        chat_id=chat_id,
         title="Nightflow Pro",
-        description=(
-            "Full schedule, weekly report, suggestions, settings editing, "
-            f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars per 30 days (recurring)."
-        ),
+        description=desc,
         payload=INVOICE_PAYLOAD_NIGHTFLOW_PRO,
         currency="XTR",
-        prices=[LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)],
-        provider_token="",
-        api_kwargs={"subscription_period": SUBSCRIPTION_PERIOD_SECONDS},
+        prices=prices,
     )
+    # XTR: omit provider_token (empty string can trigger Bad Request). Recurring may be unsupported until BotFather payments are fully configured — then we fall back to one-time.
+    try:
+        await context.bot.send_invoice(
+            **common,
+            api_kwargs={"subscription_period": SUBSCRIPTION_PERIOD_SECONDS},
+        )
+    except tg_error.BadRequest as e:
+        logger.warning("Recurring Stars invoice rejected (%s); sending one-time invoice.", e)
+        await context.bot.send_invoice(**common)
 
 
 async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -89,6 +89,12 @@ def test():
     return jsonify({"status": "ok", "message": "API is working", "time": str(datetime.now())}), 200
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Browsers request this by default; we have no asset, so avoid noisy 404 logs."""
+    return "", 204
+
+
 @app.route("/")
 def serve_index():
     try:

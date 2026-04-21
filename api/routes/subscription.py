@@ -39,7 +39,7 @@ def create_stars_invoice_link():
         payload=INVOICE_PAYLOAD_NIGHTFLOW_PRO,
         currency="XTR",
         prices=prices,
-        provider_token="",
+        provider_token=None,
         subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
     )
     if not url:
