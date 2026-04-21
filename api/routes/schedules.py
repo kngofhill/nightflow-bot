@@ -18,6 +18,48 @@ def _user_timezone(user_id: str) -> str:
     return user.data[0].get("timezone") if user.data else DEFAULT_TIMEZONE
 
 
+def _shift_type_from_work_start(work_start) -> str:
+    h = work_start.hour
+    if h >= 20 or h <= 4:
+        return "night"
+    if 12 <= h < 20:
+        return "evening"
+    return "day"
+
+
+def _sync_today_daily_from_times(
+    user_id: str,
+    shift_type: str,
+    work_start: str,
+    work_end: str,
+    sleep_start,
+    sleep_end,
+):
+    timezone = _user_timezone(user_id)
+    today = str(get_user_now_from_timezone_name(timezone).date())
+    existing = (
+        supabase_client.table("daily_schedules")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("date", today)
+        .execute()
+    )
+    daily_payload = {
+        "shift_type": shift_type,
+        "work_start": work_start,
+        "work_end": work_end,
+        "sleep_start": sleep_start,
+        "sleep_end": sleep_end,
+        "is_custom": False,
+    }
+    if existing.data:
+        supabase_client.table("daily_schedules").update(daily_payload).eq("id", existing.data[0]["id"]).execute()
+    else:
+        daily_payload["user_id"] = user_id
+        daily_payload["date"] = today
+        supabase_client.table("daily_schedules").insert(daily_payload).execute()
+
+
 @bp.route("/constant", methods=["GET"])
 def get_constant():
     user_id, err = get_user_from_request()
@@ -48,9 +90,21 @@ def patch_constant():
         return err
 
     data = request.get_json(silent=True) or {}
-    allowed = ("coffee_windows", "meal_windows", "brightness_windows")
+    const = (
+        supabase_client.table("constant_schedules")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .execute()
+    )
+    if not const.data:
+        return jsonify({"error": "No active schedule"}), 404
+
+    row = dict(const.data[0])
+    row_id = row["id"]
     updates = {}
-    for field in allowed:
+
+    for field in ("coffee_windows", "meal_windows", "brightness_windows"):
         if field not in data:
             continue
         val = data[field]
@@ -60,20 +114,40 @@ def patch_constant():
             return jsonify({"error": f"{field} must be a list"}), 400
         updates[field] = json.dumps(val)
 
+    time_keys = ("work_start", "work_end", "sleep_start", "sleep_end")
+    time_patch = {k: data[k] for k in time_keys if k in data}
+
+    if time_patch:
+        merged = {**row, **time_patch}
+        ws = str_to_time(merged.get("work_start"))
+        we = str_to_time(merged.get("work_end"))
+        if not ws or not we:
+            return jsonify({"error": "Invalid work hours"}), 400
+
+        ss = str_to_time(merged.get("sleep_start")) if merged.get("sleep_start") not in (None, "") else None
+        se = str_to_time(merged.get("sleep_end")) if merged.get("sleep_end") not in (None, "") else None
+        if bool(ss) != bool(se):
+            return jsonify({"error": "Provide both sleep_start and sleep_end, or neither"}), 400
+
+        for f in time_keys:
+            if f not in time_patch:
+                continue
+            raw = time_patch[f]
+            if f in ("work_start", "work_end"):
+                t = str_to_time(raw)
+                if not t:
+                    return jsonify({"error": f"Invalid {f}"}), 400
+                updates[f] = time_to_str(t)
+            else:
+                t = str_to_time(raw) if raw not in (None, "") else None
+                updates[f] = time_to_str(t) if t else None
+
+        if "work_start" in time_patch or "work_end" in time_patch:
+            updates["shift_type"] = _shift_type_from_work_start(ws)
+
     if not updates:
         return jsonify({"error": "No updatable fields provided"}), 400
 
-    const = (
-        supabase_client.table("constant_schedules")
-        .select("id")
-        .eq("user_id", user_id)
-        .eq("active", True)
-        .execute()
-    )
-    if not const.data:
-        return jsonify({"error": "No active schedule"}), 404
-
-    row_id = const.data[0]["id"]
     supabase_client.table("constant_schedules").update(updates).eq("id", row_id).execute()
 
     refreshed = (
@@ -85,6 +159,16 @@ def patch_constant():
     schedule = refreshed.data[0]
     for field in ("coffee_windows", "meal_windows", "brightness_windows"):
         schedule[field] = safe_json_parse(schedule.get(field))
+
+    if time_patch:
+        _sync_today_daily_from_times(
+            user_id,
+            schedule.get("shift_type") or row.get("shift_type"),
+            schedule.get("work_start"),
+            schedule.get("work_end"),
+            schedule.get("sleep_start"),
+            schedule.get("sleep_end"),
+        )
 
     return jsonify(schedule)
 

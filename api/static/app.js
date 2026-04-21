@@ -91,6 +91,43 @@
         return `${a} – ${b}`;
     }
 
+    function applyUserSettingsFromUserRow(row) {
+        if (!row) return;
+        let prefs = row.notification_prefs;
+        if (typeof prefs === 'string') {
+            try {
+                prefs = JSON.parse(prefs);
+            } catch (e) {
+                prefs = {};
+            }
+        }
+        if (!prefs || typeof prefs !== 'object') prefs = {};
+        const def = (v, d) => (v === undefined || v === null ? d : !!v);
+        state.settings.notifAll = row.notification_enabled !== false;
+        state.settings.notifCoffee = def(prefs.notifCoffee, true);
+        state.settings.notifMeal = def(prefs.notifMeal, true);
+        state.settings.notifLight = def(prefs.notifLight, true);
+        state.settings.notifSleep = def(prefs.notifSleep, true);
+        state.settings.notifSummary = def(prefs.notifSummary, true);
+        state.settings.transitionReminders = def(prefs.transitionReminders, true);
+        const ld = prefs.transitionLeadDays ?? prefs.transition_lead_days;
+        state.settings.transitionLeadDays = ld != null && ld !== '' ? String(ld) : '3';
+    }
+
+    async function patchUserMe(body) {
+        try {
+            const res = await api(`/users/me?telegram_id=${user.id}`, {
+                method: 'PATCH',
+                json: body,
+            });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch (e) {
+            console.warn('patchUserMe', e);
+            return null;
+        }
+    }
+
     async function reloadScheduleFromApi() {
         try {
             let res = await api(`/schedules/daily/today?telegram_id=${user.id}`);
@@ -873,9 +910,29 @@
         };
     }
 
+    const DEFAULT_TZ_LIST = ['Asia/Tashkent', 'UTC', 'Europe/London', 'America/New_York'];
+
+    function timezoneOptionsHtml(selected) {
+        const s = selected || 'Asia/Tashkent';
+        const list = [...DEFAULT_TZ_LIST];
+        if (!list.includes(s)) list.unshift(s);
+        return list.map((z) => `<option value="${escapeHtml(z)}"${z === s ? ' selected' : ''}>${escapeHtml(z)}</option>`).join('');
+    }
+
+    function leadDaysOptionsHtml(val) {
+        const v = String(val || '3');
+        return [1, 2, 3]
+            .map(
+                (n) =>
+                    `<option value="${n}"${String(n) === v ? ' selected' : ''}>${n} day${n > 1 ? 's' : ''}</option>`
+            )
+            .join('');
+    }
+
     function renderSettings() {
         const sched = state.schedule;
         const s = state.settings;
+        const tz = state.userRow?.timezone || 'Asia/Tashkent';
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
@@ -926,10 +983,7 @@
                 <p class="nf-field-label">🌍 TIMEZONE</p>
                 <div class="nf-card">
                     <select class="nf-select" id="tz-select">
-                        <option>Asia/Tashkent</option>
-                        <option>UTC</option>
-                        <option>Europe/London</option>
-                        <option>America/New_York</option>
+                        ${timezoneOptionsHtml(tz)}
                     </select>
                 </div>
                 <p class="nf-field-label">🔄 TRANSITION</p>
@@ -938,9 +992,7 @@
                     <div class="nf-row" style="margin-top:8px;">
                         <span class="nf-muted">Lead time</span>
                         <select class="nf-select" id="lead-days">
-                            <option value="1">1 day</option>
-                            <option value="2">2 days</option>
-                            <option value="3" selected>3 days</option>
+                            ${leadDaysOptionsHtml(s.transitionLeadDays)}
                         </select>
                     </div>
                 </div>
@@ -955,8 +1007,32 @@
         document.getElementById('ed-co').onclick = () => openEditCoffee();
         document.getElementById('ed-me').onclick = () => openEditMeals();
         document.getElementById('ed-li').onclick = () => openEditLight();
-        document.getElementById('save-all').onclick = () =>
-            tg.showAlert('Settings saved locally. Wire /api/v1/settings to persist.');
+        document.getElementById('save-all').onclick = async () => {
+            const tzSel = document.getElementById('tz-select');
+            const leadSel = document.getElementById('lead-days');
+            if (leadSel) state.settings.transitionLeadDays = leadSel.value;
+            const row = await patchUserMe({
+                timezone: tzSel ? tzSel.value : tz,
+                notification_enabled: state.settings.notifAll,
+                notification_prefs: {
+                    notifCoffee: state.settings.notifCoffee,
+                    notifMeal: state.settings.notifMeal,
+                    notifLight: state.settings.notifLight,
+                    notifSleep: state.settings.notifSleep,
+                    notifSummary: state.settings.notifSummary,
+                    transitionReminders: state.settings.transitionReminders,
+                    transitionLeadDays: state.settings.transitionLeadDays,
+                },
+            });
+            if (!row) {
+                tg.showAlert('Could not save settings');
+                return;
+            }
+            state.userRow = row;
+            applyUserSettingsFromUserRow(row);
+            tg.showAlert('Settings saved successfully');
+            render();
+        };
         document.getElementById('reset-def').onclick = () => {
             state.settings = {
                 notifAll: true,
@@ -971,11 +1047,43 @@
             render();
         };
 
+        const leadEl = document.getElementById('lead-days');
+        if (leadEl) {
+            leadEl.onchange = async () => {
+                state.settings.transitionLeadDays = leadEl.value;
+                const row = await patchUserMe({ transition_lead_days: leadEl.value });
+                if (!row) {
+                    tg.showAlert('Could not save setting');
+                    render();
+                    return;
+                }
+                state.userRow = row;
+                applyUserSettingsFromUserRow(row);
+            };
+        }
+
         $root.querySelectorAll('.nf-switch').forEach((sw) => {
-            sw.addEventListener('click', () => {
+            sw.addEventListener('click', async () => {
                 const k = sw.getAttribute('data-k');
-                state.settings[k] = !state.settings[k];
-                sw.classList.toggle('on', state.settings[k]);
+                const prev = state.settings[k];
+                const next = !prev;
+                state.settings[k] = next;
+                sw.classList.toggle('on', next);
+                const body =
+                    k === 'notifAll'
+                        ? { notification_enabled: next }
+                        : k === 'transitionReminders'
+                          ? { transition_reminders: next }
+                          : { notification_prefs: { [k]: next } };
+                const row = await patchUserMe(body);
+                if (!row) {
+                    state.settings[k] = prev;
+                    sw.classList.toggle('on', prev);
+                    tg.showAlert('Could not save setting');
+                    return;
+                }
+                state.userRow = row;
+                applyUserSettingsFromUserRow(row);
             });
         });
     }
@@ -1021,7 +1129,7 @@
             <p class="nf-field-label">😴 SLEEP</p>
             <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'ms-s')}</div>
             <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'ms-e')}</div>
-            <p class="nf-sub">When you change work hours, meals, coffee, and light times will recalculate.</p>
+            <p class="nf-sub">Coffee, meal, and light reminder times are not changed here.</p>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="m-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="m-can">CANCEL</button>
@@ -1039,7 +1147,7 @@
             renderLoading();
             try {
                 const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
-                    method: 'POST',
+                    method: 'PATCH',
                     json: payload,
                 });
                 if (!res.ok) throw new Error('x');
@@ -1358,7 +1466,10 @@
         state.stack = [];
         try {
             const ur = await api(`/users/me?telegram_id=${user.id}`);
-            if (ur.ok) state.userRow = await ur.json();
+            if (ur.ok) {
+                state.userRow = await ur.json();
+                applyUserSettingsFromUserRow(state.userRow);
+            }
         } catch (e) {
             console.warn(e);
         }
