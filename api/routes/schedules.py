@@ -123,12 +123,6 @@ def today_daily():
     today = str(get_user_now_from_timezone_name(timezone).date())
 
     daily = supabase_client.table("daily_schedules").select("*").eq("user_id", user_id).eq("date", today).execute()
-    if daily.data:
-        row = daily.data[0]
-        for field in ("coffee_windows", "meal_windows", "brightness_windows"):
-            if field in row and row[field] is not None:
-                row[field] = safe_json_parse(row.get(field))
-        return jsonify(row)
 
     const = (
         supabase_client.table("constant_schedules")
@@ -137,6 +131,15 @@ def today_daily():
         .eq("active", True)
         .execute()
     )
+
+    if daily.data:
+        row = daily.data[0]
+        if const.data:
+            const_row = const.data[0]
+            for field in ("coffee_windows", "meal_windows", "brightness_windows"):
+                row[field] = safe_json_parse(const_row.get(field))
+        return jsonify(row)
+
     if not const.data:
         return jsonify({"error": "No schedule found"}), 404
 
