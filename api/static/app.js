@@ -308,13 +308,17 @@
         }
     }
 
-    function openModal(html) {
+    function openModal(html, opts) {
+        opts = opts || {};
+        const sheetClass = opts.sheetClass ? ` ${opts.sheetClass}` : '';
         $modal.innerHTML = `
             <div class="modal-backdrop" data-close="1"></div>
-            <div class="modal-sheet">${html}</div>`;
+            <div class="modal-sheet${sheetClass}">${html}</div>`;
         $modal.classList.add('open');
         $modal.setAttribute('aria-hidden', 'false');
-        $modal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+        if (opts.closeOnBackdrop !== false) {
+            $modal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+        }
     }
 
     function closeModal() {
@@ -1321,11 +1325,325 @@
         };
     }
 
+    function summaryCheckInPayload(localDateStr, coffees, meals) {
+        const getVal = (k) => {
+            const el = $root.querySelector(`input[data-k="${k}"]`);
+            return el ? Number(el.value) : null;
+        };
+        const energy = getVal('energy');
+        const sleep_quality = getVal('sleepq');
+        const coffee = coffees.map((c, i) => ({
+            time: c.time,
+            rating: getVal(`co-${i}`),
+        }));
+        const mealResponses = meals.map((m, i) => ({
+            time: m.time,
+            rating: getVal(`me-${i}`),
+        }));
+        return {
+            telegram_id: user.id,
+            date: localDateStr,
+            energy,
+            sleep_quality,
+            responses: { coffee, meals: mealResponses },
+        };
+    }
+
+    function dlRadioGroup(name, options, selected) {
+        return options
+            .map(
+                (o) =>
+                    `<label class="nf-dl-choice"><input type="radio" name="${name}" value="${o.v}"${o.v === selected ? ' checked' : ''}/><span>${escapeHtml(o.l)}</span></label>`
+            )
+            .join('');
+    }
+
+    function openDetailedLog(localDateStr, coffees, meals) {
+        const latOpts = [
+            { v: 'lt15', l: '< 15 min' },
+            { v: '15-30', l: '15-30 min' },
+            { v: '30-60', l: '30-60 min' },
+            { v: 'gt60', l: '> 60 min' },
+        ];
+        const roomOpts = [
+            { v: 'dark', l: 'Dark' },
+            { v: 'dim', l: 'Dim' },
+            { v: 'light', l: 'Light' },
+        ];
+        const tempOpts = [
+            { v: 'cool', l: 'Cool' },
+            { v: 'comfortable', l: 'Comfortable' },
+            { v: 'warm', l: 'Warm' },
+        ];
+
+        const html = `
+<div class="nf-detailed-inner">
+    <div class="nf-dl-header">
+        <button type="button" class="nf-back" id="dl-close" aria-label="Close">←</button>
+        <div>
+            <h2 class="nf-dl-title">Detailed log</h2>
+            <p class="nf-dl-sub">Optional · deeper check-in</p>
+        </div>
+    </div>
+    <div class="nf-dl-scroll">
+        <section class="nf-dl-card">
+            <h3 class="nf-dl-section-title">SLEEP</h3>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Actual bed time</span>
+                <div class="nf-dl-row">${selectTimeHtml('', '22:00', 'dl-bed')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Actual wake time</span>
+                <div class="nf-dl-row">${selectTimeHtml('', '08:00', 'dl-wake')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Time to fall asleep</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-slat', latOpts, 'lt15')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Woke up during the night?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-night',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+                <div class="nf-dl-subfield" id="dl-night-count-wrap" style="display:none;">
+                    <span class="nf-dl-label">Times woken</span>
+                    <input type="number" class="nf-dl-num" id="dl-night-count" min="1" max="20" value="1" />
+                </div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Room darkness</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-room', roomOpts, 'dark')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Temperature</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-temp', tempOpts, 'comfortable')}</div>
+            </div>
+        </section>
+        <section class="nf-dl-card">
+            <h3 class="nf-dl-section-title">CAFFEINE</h3>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Total cups today</span>
+                <select class="nf-select" id="dl-cups" aria-label="Cups of caffeine">
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4+</option>
+                </select>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Last coffee / caffeine time</span>
+                <div class="nf-dl-row">${selectTimeHtml('', '14:00', 'dl-lastcaf')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Caffeine after 6pm?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-caf6',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+            </div>
+        </section>
+        <section class="nf-dl-card">
+            <h3 class="nf-dl-section-title">LIGHT & SCREENS</h3>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Phone or tablet before bed?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-scr',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+                <div class="nf-dl-subfield" id="dl-screens-wrap" style="display:none;">
+                    <span class="nf-dl-label">Minutes of screen time</span>
+                    <input type="number" class="nf-dl-num" id="dl-screens-min" min="0" max="600" value="15" />
+                </div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Bright light within 30 min of waking?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-bright',
+                    [
+                        { v: '1', l: 'Yes' },
+                        { v: '0', l: 'No' },
+                    ],
+                    '1'
+                )}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Dimmed lights ~2h before sleep?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-dim',
+                    [
+                        { v: '1', l: 'Yes' },
+                        { v: '0', l: 'No' },
+                    ],
+                    '1'
+                )}</div>
+            </div>
+        </section>
+        <section class="nf-dl-card">
+            <h3 class="nf-dl-section-title">MEALS</h3>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Time of last meal before sleep</span>
+                <div class="nf-dl-row">${selectTimeHtml('', '20:00', 'dl-lastmeal')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Ate within 2h of bedtime?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-ate',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Hungry during sleep?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-hungry',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+            </div>
+        </section>
+        <section class="nf-dl-card">
+            <h3 class="nf-dl-section-title">WORK & ENERGY</h3>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Most tired during shift at</span>
+                <div class="nf-dl-row">${selectTimeHtml('', '03:00', 'dl-tired')}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Took breaks?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-breaks',
+                    [
+                        { v: '1', l: 'Yes' },
+                        { v: '0', l: 'No' },
+                    ],
+                    '1'
+                )}</div>
+            </div>
+            <div class="nf-dl-field">
+                <span class="nf-dl-label">Unusual stress?</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup(
+                    'dl-stress',
+                    [
+                        { v: '0', l: 'No' },
+                        { v: '1', l: 'Yes' },
+                    ],
+                    '0'
+                )}</div>
+                <div class="nf-dl-subfield" id="dl-stress-wrap" style="display:none;">
+                    <span class="nf-dl-label">Note (optional)</span>
+                    <textarea class="nf-dl-note" id="dl-stress-note" maxlength="2000" placeholder="A few words..."></textarea>
+                </div>
+            </div>
+        </section>
+    </div>
+    <div class="nf-dl-footer">
+        <button type="button" class="nf-cta" id="dl-save">SAVE DETAILS</button>
+        <button type="button" class="nf-cta nf-cta-secondary" id="dl-skip">SKIP</button>
+    </div>
+</div>`;
+
+        openModal(html, { sheetClass: 'nf-detailed-sheet', closeOnBackdrop: false });
+
+        const sheet = $modal.querySelector('.modal-sheet');
+        const q = (sel) => sheet.querySelector(sel);
+        const syncNight = () => {
+            const on = q('input[name="dl-night"][value="1"]')?.checked;
+            const w = q('#dl-night-count-wrap');
+            if (w) w.style.display = on ? 'block' : 'none';
+        };
+        const syncScr = () => {
+            const on = q('input[name="dl-scr"][value="1"]')?.checked;
+            const w = q('#dl-screens-wrap');
+            if (w) w.style.display = on ? 'block' : 'none';
+        };
+        const syncStress = () => {
+            const on = q('input[name="dl-stress"][value="1"]')?.checked;
+            const w = q('#dl-stress-wrap');
+            if (w) w.style.display = on ? 'block' : 'none';
+        };
+        sheet.querySelectorAll('input[name="dl-night"]').forEach((r) => r.addEventListener('change', syncNight));
+        sheet.querySelectorAll('input[name="dl-scr"]').forEach((r) => r.addEventListener('change', syncScr));
+        sheet.querySelectorAll('input[name="dl-stress"]').forEach((r) => r.addEventListener('change', syncStress));
+        syncNight();
+        syncScr();
+        syncStress();
+
+        const closeD = () => closeModal();
+        q('#dl-close').onclick = closeD;
+        q('#dl-skip').onclick = closeD;
+
+        q('#dl-save').onclick = async () => {
+            const checked = (name) => q(`input[name="${name}"]:checked`)?.value;
+            const nightYes = checked('dl-night') === '1';
+            const nightWakings = nightYes ? Math.max(1, parseInt(q('#dl-night-count')?.value || '1', 10) || 1) : 0;
+            const scrYes = checked('dl-scr') === '1';
+            const scrMin = scrYes ? Math.max(0, parseInt(q('#dl-screens-min')?.value || '0', 10) || 0) : null;
+            const stressYes = checked('dl-stress') === '1';
+            const cups = Math.min(4, Math.max(0, parseInt(q('#dl-cups')?.value || '0', 10) || 0));
+            const payload = {
+                telegram_id: user.id,
+                date: localDateStr,
+                bed_time: q('#dl-bed')?.value || null,
+                wake_time: q('#dl-wake')?.value || null,
+                sleep_latency: checked('dl-slat'),
+                night_wakings: nightWakings,
+                room_darkness: checked('dl-room'),
+                temperature: checked('dl-temp'),
+                caffeine_cups: cups,
+                last_caffeine_time: q('#dl-lastcaf')?.value || null,
+                caffeine_after_6pm: checked('dl-caf6') === '1',
+                screens_before_bed: scrYes,
+                screens_minutes: scrMin,
+                bright_light_morning: checked('dl-bright') === '1',
+                dim_lights_before_sleep: checked('dl-dim') === '1',
+                last_meal_time: q('#dl-lastmeal')?.value || null,
+                ate_near_bedtime: checked('dl-ate') === '1',
+                hungry_during_sleep: checked('dl-hungry') === '1',
+                tired_at: q('#dl-tired')?.value || null,
+                took_breaks: checked('dl-breaks') === '1',
+                stress: stressYes,
+                stress_note: stressYes ? (q('#dl-stress-note')?.value || '').trim() || null : null,
+            };
+            try {
+                const r1 = await api('/summaries', { method: 'POST', json: summaryCheckInPayload(localDateStr, coffees, meals) });
+                if (!r1.ok) throw new Error('sum');
+                const r2 = await api('/summaries/detailed', { method: 'POST', json: payload });
+                if (!r2.ok) throw new Error('det');
+                tg.showAlert('Detailed log saved.');
+                closeModal();
+                back();
+            } catch (e) {
+                console.error(e);
+                tg.showAlert('Could not save. Try again.');
+            }
+        };
+    }
+
     function renderSummary() {
         const sched = state.schedule || {};
         const d = new Date();
         const coffees = (sched.coffee_windows || []).slice(0, 2);
         const meals = (sched.meal_windows || []).slice(0, 6);
+        const localDateStr = d.toISOString().slice(0, 10);
 
         const slider = (id, label, minL, maxL) => `
             <div class="nf-slider-block">
@@ -1367,43 +1685,19 @@
         html += `
                 ${slider('sleepq', 'SLEEP QUALITY', '😴', '😊')}
                 <button type="button" class="nf-cta" id="btn-save-sum">SAVE SUMMARY</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more" style="margin-top:10px;">TELL ME MORE</button>
             </div>`;
 
         $root.innerHTML = html;
         document.getElementById('bsum').onclick = back;
+        document.getElementById('btn-tell-more').onclick = () => openDetailedLog(localDateStr, coffees, meals);
         document.getElementById('btn-save-sum').onclick = async () => {
-            const localDateStr = d.toISOString().slice(0, 10);
-
-            const getVal = (k) => {
-                const el = $root.querySelector(`input[data-k="${k}"]`);
-                return el ? Number(el.value) : null;
-            };
-
-            const energy = getVal('energy');
-            const sleep_quality = getVal('sleepq');
-
-            const coffee = coffees.map((c, i) => ({
-                time: c.time,
-                rating: getVal(`co-${i}`),
-            }));
-            const mealResponses = meals.map((m, i) => ({
-                time: m.time,
-                rating: getVal(`me-${i}`),
-            }));
-
-            const responses = { coffee, meals: mealResponses };
-
             try {
-                await api('/summaries', {
+                const res = await api('/summaries', {
                     method: 'POST',
-                    json: {
-                        telegram_id: user.id,
-                        date: localDateStr,
-                        energy,
-                        sleep_quality,
-                        responses,
-                    },
+                    json: summaryCheckInPayload(localDateStr, coffees, meals),
                 });
+                if (!res.ok) throw new Error('x');
             } catch (e) {
                 console.error(e);
                 tg.showAlert('Could not save summary.');
