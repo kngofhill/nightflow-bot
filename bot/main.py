@@ -7,6 +7,7 @@ import asyncio
 import traceback 
 
 from telegram import Update, MenuButtonWebApp, WebAppInfo, LabeledPrice
+import telegram.error as tg_error
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.ext import MessageHandler, filters, PreCheckoutQueryHandler
 
@@ -84,6 +85,7 @@ class RefundedPaymentFilter(filters.BaseFilter):
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send Telegram Stars invoice for Nightflow Pro (30-day recurring)."""
+    # PTB 22.x send_invoice has no subscription_period kwarg; pass Bot API fields via api_kwargs.
     await context.bot.send_invoice(
         chat_id=update.effective_chat.id,
         title="Nightflow Pro",
@@ -95,7 +97,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency="XTR",
         prices=[LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)],
         provider_token="",
-        subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
+        api_kwargs={"subscription_period": SUBSCRIPTION_PERIOD_SECONDS},
     )
 
 
@@ -220,6 +222,18 @@ async def send_notification(context, user_id, message, ntype, metadata=None):
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
 
+async def log_errors(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Avoid noisy tracebacks for common Telegram conflicts (two pollers / webhook race)."""
+    err = context.error
+    if isinstance(err, tg_error.Conflict):
+        logger.warning(
+            "Telegram getUpdates conflict (only one bot poller allowed per token): %s",
+            err,
+        )
+        return
+    logger.error("Unhandled bot error", exc_info=err)
+
+
 async def post_init(application: Application):
     """Set menu button and ensure we're in polling mode."""
     try:
@@ -256,6 +270,7 @@ def main():
     application.add_handler(PreCheckoutQueryHandler(precheckout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment))
     application.add_handler(MessageHandler(RefundedPaymentFilter(), on_refunded_payment))
+    application.add_error_handler(log_errors)
 
     # Schedule notifications
     if application.job_queue:
