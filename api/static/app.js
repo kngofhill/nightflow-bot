@@ -91,6 +91,30 @@
         return `${a} – ${b}`;
     }
 
+    async function reloadScheduleFromApi() {
+        try {
+            let res = await api(`/schedules/daily/today?telegram_id=${user.id}`);
+            if (res.status === 404) {
+                res = await api(`/schedules/full?telegram_id=${user.id}`);
+            }
+            if (!res.ok) return false;
+            state.schedule = await res.json();
+            for (const f of ['coffee_windows', 'meal_windows', 'brightness_windows']) {
+                if (typeof state.schedule[f] === 'string') {
+                    try {
+                        state.schedule[f] = JSON.parse(state.schedule[f]);
+                    } catch (e) {
+                        state.schedule[f] = [];
+                    }
+                }
+            }
+            return true;
+        } catch (e) {
+            console.warn('reloadScheduleFromApi', e);
+            return false;
+        }
+    }
+
     async function api(path, options = {}) {
         const headers = {
             ...(options.headers || {}),
@@ -929,10 +953,8 @@
         document.getElementById('bst').onclick = back;
         document.getElementById('ed-ws').onclick = () => openEditWork();
         document.getElementById('ed-co').onclick = () => openEditCoffee();
-        document.getElementById('ed-me').onclick = () =>
-            tg.showAlert('Meal editor: connect PATCH schedule when API is ready.');
-        document.getElementById('ed-li').onclick = () =>
-            tg.showAlert('Light editor: connect PATCH schedule when API is ready.');
+        document.getElementById('ed-me').onclick = () => openEditMeals();
+        document.getElementById('ed-li').onclick = () => openEditLight();
         document.getElementById('save-all').onclick = () =>
             tg.showAlert('Settings saved locally. Wire /api/v1/settings to persist.');
         document.getElementById('reset-def').onclick = () => {
@@ -1021,7 +1043,8 @@
                     json: payload,
                 });
                 if (!res.ok) throw new Error('x');
-                await loadUserAndSchedule();
+                const ok = await reloadScheduleFromApi();
+                if (!ok) throw new Error('x');
                 state.screen = 'settings';
                 state.stack = ['dashboard'];
                 render();
@@ -1035,28 +1058,158 @@
 
     function openEditCoffee() {
         const sched = state.schedule || {};
-        const cw = sched.coffee_windows || [];
-        const t0 = cw[0]?.time || '21:30';
-        const t1 = cw[1]?.time || '01:30';
+        let cw = [...(sched.coffee_windows || [])];
+        const n = Math.max(2, cw.length);
+        while (cw.length < n) {
+            cw.push({
+                time: '22:00',
+                message: '☕ Coffee',
+                type: cw.length ? 'mid_shift' : 'pre_work',
+            });
+        }
+        const rows = cw
+            .map((w, i) => {
+                const t = w.time || '22:00';
+                const label = i === 0 ? 'FIRST COFFEE' : i === 1 ? 'SECOND COFFEE' : `COFFEE ${i + 1}`;
+                return `<p class="nf-field-label">${label}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Coffee')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `c-${i}`)}</div></div>`;
+            })
+            .join('');
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="mc-close">←</button>
                 <h1 style="font-size:1rem;">Coffee</h1>
                 <span></span>
             </div>
-            <p class="nf-field-label">FIRST COFFEE</p>
-            <div class="nf-card">Current: ${escapeHtml(t0)}<div style="margin-top:8px;">New ${selectTimeHtml('', t0, 'c0')}</div></div>
-            <p class="nf-field-label">SECOND COFFEE</p>
-            <div class="nf-card">Current: ${escapeHtml(t1)}<div style="margin-top:8px;">New ${selectTimeHtml('', t1, 'c1')}</div></div>
+            ${rows}
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="mc-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="mc-can">CANCEL</button>
             </div>`);
         document.getElementById('mc-close').onclick = closeModal;
         document.getElementById('mc-can').onclick = closeModal;
-        document.getElementById('mc-save').onclick = () => {
-            closeModal();
-            tg.showAlert('Coffee overrides need a PATCH endpoint; values not saved yet.');
+        document.getElementById('mc-save').onclick = async () => {
+            const next = cw.map((w, i) => ({
+                ...w,
+                time: document.getElementById(`c-${i}`).value,
+            }));
+            try {
+                const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
+                    method: 'PATCH',
+                    json: { coffee_windows: next },
+                });
+                if (!res.ok) throw new Error('x');
+                const ok = await reloadScheduleFromApi();
+                if (!ok) throw new Error('x');
+                closeModal();
+                render();
+            } catch (e) {
+                tg.showAlert('Could not save coffee times');
+            }
+        };
+    }
+
+    function openEditMeals() {
+        const sched = state.schedule || {};
+        let mw = [...(sched.meal_windows || [])];
+        const n = Math.max(1, mw.length);
+        while (mw.length < n) {
+            mw.push({ time: '12:00', message: '🍽️ Meal', type: 'mid_shift' });
+        }
+        const rows = mw
+            .map((w, i) => {
+                const t = w.time || '12:00';
+                return `<p class="nf-field-label">MEAL ${i + 1}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Meal')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `m-${i}`)}</div></div>`;
+            })
+            .join('');
+        openModal(`
+            <div class="nf-topbar" style="margin-bottom:12px;">
+                <button type="button" class="nf-back" id="mm-close">←</button>
+                <h1 style="font-size:1rem;">Meals</h1>
+                <span></span>
+            </div>
+            ${rows}
+            <div class="nf-row-btns">
+                <button type="button" class="nf-cta" id="mm-save">SAVE</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="mm-can">CANCEL</button>
+            </div>`);
+        document.getElementById('mm-close').onclick = closeModal;
+        document.getElementById('mm-can').onclick = closeModal;
+        document.getElementById('mm-save').onclick = async () => {
+            const next = mw.map((w, i) => ({
+                ...w,
+                time: document.getElementById(`m-${i}`).value,
+            }));
+            try {
+                const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
+                    method: 'PATCH',
+                    json: { meal_windows: next },
+                });
+                if (!res.ok) throw new Error('x');
+                const ok = await reloadScheduleFromApi();
+                if (!ok) throw new Error('x');
+                closeModal();
+                render();
+            } catch (e) {
+                tg.showAlert('Could not save meal times');
+            }
+        };
+    }
+
+    function openEditLight() {
+        const sched = state.schedule || {};
+        let bw = [...(sched.brightness_windows || [])];
+        const n = Math.max(1, bw.length);
+        while (bw.length < n) {
+            bw.push({
+                time: '21:00',
+                message: '💡 Light reminder',
+                type: 'dim',
+                action: 'dim_lights',
+            });
+        }
+        const rows = bw
+            .map((w, i) => {
+                const t = w.time || '21:00';
+                return `<p class="nf-field-label">REMINDER ${i + 1}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Light')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `l-${i}`)}</div></div>`;
+            })
+            .join('');
+        openModal(`
+            <div class="nf-topbar" style="margin-bottom:12px;">
+                <button type="button" class="nf-back" id="ml-close">←</button>
+                <h1 style="font-size:1rem;">Light reminders</h1>
+                <span></span>
+            </div>
+            ${rows}
+            <div class="nf-row-btns">
+                <button type="button" class="nf-cta" id="ml-save">SAVE</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="ml-can">CANCEL</button>
+            </div>`);
+        document.getElementById('ml-close').onclick = closeModal;
+        document.getElementById('ml-can').onclick = closeModal;
+        document.getElementById('ml-save').onclick = async () => {
+            const next = bw.map((w, i) => ({
+                ...w,
+                time: document.getElementById(`l-${i}`).value,
+            }));
+            try {
+                const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
+                    method: 'PATCH',
+                    json: { brightness_windows: next },
+                });
+                if (!res.ok) throw new Error('x');
+                const ok = await reloadScheduleFromApi();
+                if (!ok) throw new Error('x');
+                closeModal();
+                render();
+            } catch (e) {
+                tg.showAlert('Could not save light reminders');
+            }
         };
     }
 

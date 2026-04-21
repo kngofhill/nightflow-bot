@@ -41,6 +41,54 @@ def get_constant():
     return jsonify(schedule)
 
 
+@bp.route("/constant", methods=["PATCH"])
+def patch_constant():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    allowed = ("coffee_windows", "meal_windows", "brightness_windows")
+    updates = {}
+    for field in allowed:
+        if field not in data:
+            continue
+        val = data[field]
+        if val is None:
+            val = []
+        if not isinstance(val, list):
+            return jsonify({"error": f"{field} must be a list"}), 400
+        updates[field] = json.dumps(val)
+
+    if not updates:
+        return jsonify({"error": "No updatable fields provided"}), 400
+
+    const = (
+        supabase_client.table("constant_schedules")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .execute()
+    )
+    if not const.data:
+        return jsonify({"error": "No active schedule"}), 404
+
+    row_id = const.data[0]["id"]
+    supabase_client.table("constant_schedules").update(updates).eq("id", row_id).execute()
+
+    refreshed = (
+        supabase_client.table("constant_schedules")
+        .select("*")
+        .eq("id", row_id)
+        .execute()
+    )
+    schedule = refreshed.data[0]
+    for field in ("coffee_windows", "meal_windows", "brightness_windows"):
+        schedule[field] = safe_json_parse(schedule.get(field))
+
+    return jsonify(schedule)
+
+
 @bp.route("/constant", methods=["POST"])
 def create_constant():
     user_id, err = get_user_from_request()
