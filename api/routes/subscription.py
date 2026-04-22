@@ -52,6 +52,7 @@ def create_stars_invoice_link():
         prices=prices,
         provider_token=None,
         subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
+        onetime_if_recurring_fails=False,
     )
     if not url:
         return jsonify({"error": "Could not create invoice link"}), 502

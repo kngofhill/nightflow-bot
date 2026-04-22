@@ -45,11 +45,18 @@ def create_invoice_link(
     prices: list,
     provider_token: Optional[str] = None,
     subscription_period: Optional[int] = None,
+    onetime_if_recurring_fails: bool = True,
 ) -> Optional[str]:
     """Returns HTTPS invoice URL or None on failure.
 
     For XTR, omit ``provider_token`` from the request when unset/empty (some clients reject "").
-    If ``subscription_period`` is set but Telegram rejects it, retries as a one-time invoice.
+    For **Stars subscriptions**, Telegram requires ``createInvoiceLink`` with
+    ``subscription_period`` (see Bot API) — *not* ``sendInvoice`` with a subscription
+    (that yields errors like *Subscription export missing*).
+
+    If ``subscription_period`` is set and Telegram rejects the recurring request:
+    when ``onetime_if_recurring_fails`` is True, retries as a one-time XTR payment;
+    when False, returns None.
     """
     body: Dict[str, Any] = {
         "title": title,
@@ -66,6 +73,11 @@ def create_invoice_link(
         result = _post_create_invoice_link(bot_token, with_sub)
         if result:
             return result
-        logger.warning("createInvoiceLink: recurring invoice rejected; retrying one-time XTR")
+        logger.warning(
+            "createInvoiceLink: recurring invoice rejected%s",
+            "; retrying one-time XTR" if onetime_if_recurring_fails else "",
+        )
+        if not onetime_if_recurring_fails:
+            return None
 
     return _post_create_invoice_link(bot_token, body)

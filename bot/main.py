@@ -6,7 +6,13 @@ import json
 import asyncio
 import traceback 
 
-from telegram import Update, MenuButtonWebApp, WebAppInfo, LabeledPrice
+from telegram import (
+    Update,
+    MenuButtonWebApp,
+    WebAppInfo,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 import telegram.error as tg_error
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.ext import MessageHandler, filters, PreCheckoutQueryHandler
@@ -39,6 +45,7 @@ from shared.subscription import (
     MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK,
     should_skip_telegram_star_cancel,
 )
+from shared.telegram_invoice import create_invoice_link
 from shared.telegram_star_api import (
     format_telegram_cancel_subscription_error,
     is_telegram_charge_invalid_error,
@@ -101,32 +108,42 @@ class RefundedPaymentFilter(filters.BaseFilter):
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Telegram Stars invoice for Nightflow Pro (XTR). Tries recurring; falls back to one-time if API rejects."""
+    """Recurring Nightflow Pro via ``createInvoiceLink`` + open URL (Bot API: subscription invoices are not for ``sendInvoice``)."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        await update.message.reply_text("Billing is not configured (TELEGRAM_TOKEN).")
+        return
     # TESTING ONLY: price is PRO_PRICE_STARS (1 Star); production was 50.
-    chat_id = update.effective_chat.id
-    prices = [LabeledPrice("1 month", PRO_PRICE_STARS)]
     desc = (
         "Full schedule, weekly report, suggestions, settings editing, "
-        f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars per 30 days (recurring)."
+        f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars every 30 days (renews until you cancel)."
     )
-    common = dict(
-        chat_id=chat_id,
+    prices = [{"label": "1 month", "amount": int(PRO_PRICE_STARS)}]
+    link = create_invoice_link(
+        token,
         title="Nightflow Pro",
         description=desc,
         payload=INVOICE_PAYLOAD_NIGHTFLOW_PRO,
         currency="XTR",
         prices=prices,
+        provider_token=None,
+        subscription_period=SUBSCRIPTION_PERIOD_SECONDS,
+        onetime_if_recurring_fails=False,
     )
-    # XTR: do not pass provider_token (or use None). Recurring: subscription_period = 30 days in seconds.
-    try:
-        await context.bot.send_invoice(
-            **common,
-            provider_token=None,
-            api_kwargs={"subscription_period": SUBSCRIPTION_PERIOD_SECONDS},
+    if not link:
+        await update.message.reply_text(
+            "Could not create a recurring Stars payment link. "
+            "In BotFather, enable Stars + payments for this bot, then try again — "
+            "or subscribe from the mini-app (Settings)."
         )
-    except tg_error.BadRequest as e:
-        logger.warning("Recurring Stars invoice rejected (%s); sending one-time invoice.", e)
-        await context.bot.send_invoice(**common, provider_token=None)
+        return
+    await update.message.reply_text(
+        "Nightflow Pro renews every 30 days in Telegram (Stars). "
+        "Tap the button, complete payment, and your Pro time will be applied here.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Pay — Nightflow Pro (30-day subscription)", url=link)]]
+        ),
+    )
 
 
 async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
