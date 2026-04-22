@@ -18,6 +18,7 @@ CREATE TABLE users (
     trial_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     pro_expires_at TIMESTAMP WITH TIME ZONE,
     last_pro_payment_at TIMESTAMP WITH TIME ZONE,
+    telegram_payment_charge_id TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

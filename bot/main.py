@@ -133,12 +133,13 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
         return
     tid = update.effective_user.id
     exp = sp.subscription_expiration_date
-    apply_pro_subscription_from_payment(tid, exp)
+    ch = getattr(sp, "telegram_payment_charge_id", None)
+    apply_pro_subscription_from_payment(tid, exp, ch)
     await update.message.reply_text("Nightflow Pro is now active. Open the mini-app to use every feature.")
 
 
 async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """# TESTING ONLY — simulate refund: revoke paid Pro (same as Telegram refunded_payment)."""
+    """Refunds Stars via ``refundStarPayment``, then clears Pro in DB. Same 3-day window as Telegram policy."""
     tid = update.effective_user.id
     row = get_user_by_telegram_id(tid)
     if not paid_pro_period_active(row):
@@ -152,8 +153,40 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Refunds are only allowed within the first 3 days after purchase."
         )
         return
+
+    charge_id = (row or {}).get("telegram_payment_charge_id")
+    if not charge_id:
+        # Local fallback: cannot call Telegram without the charge id from successful_payment
+        logger.warning("refund: no telegram_payment_charge_id for user %s", tid)
+        revoke_pro_subscription(tid)
+        await update.message.reply_text(
+            "Pro access was removed, but this account had no stored payment id, "
+            "so Stars could not be returned through the bot. Re-subscribe after a new purchase stores the id."
+        )
+        return
+
+    try:
+        await context.bot.refund_star_payment(
+            user_id=tid, telegram_payment_charge_id=str(charge_id)
+        )
+    except tg_error.TelegramError as e:
+        err_s = str(e)
+        low = err_s.lower()
+        logger.warning("refund_star_payment failed: %s", e)
+        # If Telegram already processed this refund, keep DB in sync.
+        if "already" in low or "repeated" in low or "was refunded" in low:
+            revoke_pro_subscription(tid)
+            await update.message.reply_text(
+                "This payment was already refunded in Telegram. Pro access is cleared to match your account."
+            )
+            return
+        await update.message.reply_text(
+            f"Could not refund Stars. Pro access is unchanged. Try again or use Telegram’s payment history. Details:\n{err_s[:500]}"
+        )
+        return
+
     revoke_pro_subscription(tid)
-    await update.message.reply_text("Your subscription has been refunded (test mode).")
+    await update.message.reply_text("Stars refunded and Pro access removed.")
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):

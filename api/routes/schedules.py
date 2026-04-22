@@ -401,10 +401,6 @@ def set_day_off():
     if err:
         return err
 
-    denied = require_pro_access(user_id)
-    if denied:
-        return denied
-
     data = request.get_json(silent=True) or {}
     date_str = data.get("date")
     if not date_str:

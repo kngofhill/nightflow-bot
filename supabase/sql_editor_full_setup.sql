@@ -39,6 +39,7 @@ CREATE TABLE users (
     trial_started_at TIMESTAMPTZ DEFAULT NOW(),
     pro_expires_at TIMESTAMPTZ,
     last_pro_payment_at TIMESTAMPTZ,
+    telegram_payment_charge_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_active TIMESTAMPTZ DEFAULT NOW()
 );

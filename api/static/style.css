@@ -715,6 +715,120 @@ body {
     font-size: 0.82rem;
 }
 
+/* Free tier: Pro upgrade hero + timeline hint (uses Telegram WebApp theme vars) */
+.nf-upgrade-hero {
+    margin: 0 0 14px;
+    padding: 16px 16px 18px;
+    border-radius: var(--nf-radius);
+    background: linear-gradient(
+        160deg,
+        var(--tg-theme-button-color, var(--nf-primary)) 0%,
+        #2a2038 100%
+    );
+    color: var(--tg-theme-button-text-color, #fff);
+    text-align: center;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+}
+
+.nf-upgrade-hero-title {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    opacity: 0.9;
+    margin: 0 0 6px;
+}
+
+.nf-upgrade-hero-text {
+    margin: 0 0 10px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: var(--tg-theme-button-text-color, #fff);
+    opacity: 0.98;
+}
+
+.nf-upgrade-hero-price {
+    margin: 0 0 12px;
+    font-size: 0.8rem;
+    opacity: 0.85;
+    color: var(--tg-theme-button-text-color, #fff);
+}
+
+.nf-btn-pro {
+    width: 100%;
+    border: none;
+    border-radius: var(--nf-radius-sm);
+    padding: 12px 16px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    background: var(--tg-theme-bg-color, #fff);
+    color: var(--tg-theme-text-color, #1a1a1f);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.nf-btn-pro:hover,
+.nf-btn-pro:active {
+    filter: brightness(1.05);
+}
+
+.nf-btn-pro-wide {
+    margin-top: 8px;
+}
+
+.nf-free-timeline-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 12px 0 0;
+    padding: 14px 14px 14px 12px;
+    border-radius: var(--nf-radius);
+    border: 1px solid var(--tg-theme-hint-color, var(--nf-border));
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.04));
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-timeline-hint-ico {
+    font-size: 1.1rem;
+    line-height: 1.2;
+    flex-shrink: 0;
+}
+
+.nf-free-timeline-hint p {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+
+.nf-bottom-nav--free {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+/* Free settings (read-only) */
+.nf-free-settings-lead {
+    margin: 0 0 16px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    padding: 0 2px;
+}
+
+.nf-free-readonly h3.nf-free-h3 {
+    margin: 0 0 8px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-free-note,
+.nf-free-tz {
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0;
+}
+
 /* Detailed log modal */
 .modal-sheet.nf-detailed-sheet {
     max-height: 92vh;

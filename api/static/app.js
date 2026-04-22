@@ -228,8 +228,60 @@
         return m >= 0 && m <= 120;
     }
 
-    function collectEvents(schedule, opts) {
-        opts = opts || {};
+    /**
+     * Next local Date when wall-clock time `HH:MM` is strictly after `fromDate`.
+     */
+    function nextOccurrenceAfterNow(hhmm, fromDate) {
+        if (!hhmm) return null;
+        const s = String(hhmm).slice(0, 5);
+        const p = s.split(':');
+        const H = Number(p[0]);
+        const M = Number(p[1] || 0);
+        if (Number.isNaN(H)) return null;
+        const t = new Date(fromDate);
+        t.setSeconds(0, 0);
+        t.setMilliseconds(0);
+        t.setHours(H, M, 0, 0);
+        if (t.getTime() <= fromDate.getTime()) {
+            t.setDate(t.getDate() + 1);
+        }
+        return t;
+    }
+
+    function getNextCoreEvent(sched) {
+        if (!sched || !sched.work_start) {
+            return { line: '⏰ Add your work hours', sub: 'Open Settings when you have Pro to edit', icon: '⏰' };
+        }
+        const now = new Date();
+        const candidates = [];
+        const add = (time, label, icon) => {
+            if (!time) return;
+            const at = nextOccurrenceAfterNow(time, now);
+            if (at) {
+                candidates.push({ at, label, icon, time: formatTime(time) });
+            }
+        };
+        add(sched.work_start, 'Shift starts', '🌙');
+        add(sched.work_end, 'Shift ends', '🏁');
+        add(sched.sleep_start, 'Bedtime', '😴');
+        add(sched.sleep_end, 'Wake', '☀️');
+        if (!candidates.length) {
+            return { line: '⏰ Next on your schedule', sub: '—', icon: '⏰' };
+        }
+        candidates.sort((a, b) => a.at - b.at);
+        const next = candidates[0];
+        const bestDelta = (next.at - now) / 60000;
+        const h = Math.floor(Math.max(0, bestDelta) / 60);
+        const m = Math.round(Math.max(0, bestDelta) % 60);
+        const shortLabel = (next.label || '').split('.')[0];
+        return {
+            line: `${next.icon} ${shortLabel} · ${next.time}`,
+            sub: `in ${h}h ${m}m`,
+            icon: next.icon,
+        };
+    }
+
+    function collectEvents(schedule) {
         const ev = [];
         const push = (time, label, icon) => {
             if (!time) return;
@@ -251,12 +303,6 @@
             push(w.time, clean(w.message) || 'Light', '💡');
         });
 
-        if (opts.basicOnly && !ev.length) {
-            push(formatTime(schedule.work_start), 'Shift starts', '🌙');
-            push(formatTime(schedule.work_end), 'Shift ends', '🏁');
-            push(formatTime(schedule.sleep_start), 'Sleep', '😴');
-        }
-
         ev.sort((a, b) => a.m - b.m);
         return ev;
     }
@@ -266,9 +312,12 @@
     }
 
     function getNextEvent(schedule) {
-        const raw = collectEvents(schedule, { basicOnly: !hasProEntitlement() });
+        if (!hasProEntitlement()) {
+            return getNextCoreEvent(schedule);
+        }
+        const raw = collectEvents(schedule);
         if (!raw.length) {
-            return { line: 'No upcoming events', sub: '', icon: '⏰' };
+            return { line: '⏰ No upcoming reminders', sub: 'Add times in Settings', icon: '⏰' };
         }
         const now = new Date();
         const cur = now.getHours() * 60 + now.getMinutes();
@@ -301,17 +350,11 @@
     }
 
     function go(screen, pushStack) {
-        const proOnly = [
-            'full',
-            'suggestions',
-            'weekly',
-            'settings',
-            'summary',
-            'dayoff',
-            'transition',
-        ];
+        const proOnly = ['full', 'suggestions', 'weekly', 'summary', 'transition'];
         if (proOnly.includes(screen) && !hasProEntitlement()) {
-            tg.showAlert('Nightflow Pro or your free trial is required for this.');
+            tg.showAlert(
+                'This area is part of Nightflow Pro. Use “Upgrade to Pro” on the home screen to unlock it.'
+            );
             return;
         }
         if (pushStack) state.stack.push(state.screen);
@@ -329,6 +372,29 @@
         if (state.screen !== 'dashboard' && state.schedule) {
             state.screen = 'dashboard';
             render();
+        }
+    }
+
+    async function openProInvoice() {
+        try {
+            const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
+            if (!res.ok) throw new Error('x');
+            const data = await res.json();
+            const url = data.url;
+            if (!url) throw new Error('x');
+            if (typeof tg.openInvoice === 'function') {
+                tg.openInvoice(url, (st) => {
+                    if (st === 'paid') {
+                        loadUserAndSchedule();
+                        tg.showAlert('Welcome to Nightflow Pro!');
+                    }
+                });
+            } else {
+                tg.openLink(url);
+            }
+        } catch (e) {
+            console.warn(e);
+            tg.showAlert('Open the bot chat and send /subscribe to pay with Stars.');
         }
     }
 
@@ -634,18 +700,17 @@
                     <p class="nf-muted nf-center" style="margin:0;">No work scheduled today. Rest up.</p>
                 </div>`;
         } else {
+            const isFree = !hasProEntitlement();
             // TESTING ONLY — revert ?? fallback to 50 before production
             const stars = state.userRow?.pro_price_stars ?? 1;
-            const subBanner = !hasProEntitlement()
-                ? `<div class="nf-pro-banner">
-                    <div>
-                        <strong>Nightflow Pro</strong>
-                        <div class="nf-muted" style="font-size:0.78rem;margin-top:4px;">${stars} Stars / 30 days · recurring</div>
-                    </div>
-                    <button type="button" class="nf-cta nf-cta-subscribe" id="btn-subscribe">UPGRADE</button>
-                </div>`
-                : '';
-            body += subBanner;
+            if (isFree) {
+                body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
+                    <div class="nf-upgrade-hero-title">Nightflow Pro</div>
+                    <p class="nf-upgrade-hero-text">Get notifications, full schedule, weekly insights, and more.</p>
+                    <p class="nf-upgrade-hero-price">${stars} Stars / 30 days</p>
+                    <button type="button" class="nf-btn-pro" id="btn-dash-pro">Upgrade to Pro</button>
+                </div>`;
+            }
             body += `
                 <div class="nf-card">
                     <div class="nf-shift-title ${escapeHtml(st)}">${shiftTitle(st)}</div>
@@ -657,6 +722,12 @@
                     <div class="nf-next-main">${escapeHtml(next.line)}</div>
                     <div class="nf-next-sub">${escapeHtml(next.sub)}</div>
                 </div>`;
+            if (isFree) {
+                body += `<div class="nf-free-timeline-hint">
+                    <span class="nf-timeline-hint-ico" aria-hidden="true">✨</span>
+                    <p>Upgrade to Pro to see your optimized coffee, meal, and light times.</p>
+                </div>`;
+            }
 
             if (rotating && hasProEntitlement()) {
                 body += `
@@ -682,9 +753,12 @@
                     <button type="button" class="nf-nav-btn" data-nav="full"><span class="nf-nav-ico">📅</span>FULL</button>
                     <button type="button" class="nf-nav-btn" data-nav="weekly"><span class="nf-nav-ico">📊</span>WEEKLY</button>
                     <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>`
-            : `<p class="nf-muted nf-center" style="margin:0;padding:8px 4px;font-size:0.78rem;">Full schedule, weekly report, and settings are part of Pro.</p>`;
+            : `
+                    <button type="button" class="nf-nav-btn" data-nav="dayoff"><span class="nf-nav-ico">😴</span>DAY OFF</button>
+                    <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>`;
+        const navClass = hasProEntitlement() ? 'nf-bottom-nav' : 'nf-bottom-nav nf-bottom-nav--free';
         body += `
-                <div class="nf-bottom-nav">
+                <div class="${navClass}">
                     ${navInner}
                 </div>
             </div>`;
@@ -701,31 +775,8 @@
             });
         });
 
-        const subBtn = document.getElementById('btn-subscribe');
-        if (subBtn) {
-            subBtn.onclick = async () => {
-                try {
-                    const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
-                    if (!res.ok) throw new Error('x');
-                    const data = await res.json();
-                    const url = data.url;
-                    if (!url) throw new Error('x');
-                    if (typeof tg.openInvoice === 'function') {
-                        tg.openInvoice(url, (st) => {
-                            if (st === 'paid') {
-                                loadUserAndSchedule();
-                                tg.showAlert('Welcome to Nightflow Pro!');
-                            }
-                        });
-                    } else {
-                        tg.openLink(url);
-                    }
-                } catch (e) {
-                    console.warn(e);
-                    tg.showAlert('Open the bot chat and send /subscribe to pay with Stars.');
-                }
-            };
-        }
+        const proBtn = document.getElementById('btn-dash-pro');
+        if (proBtn) proBtn.onclick = () => openProInvoice();
 
         const tr = document.getElementById('btn-dash-trans');
         if (tr) tr.onclick = () => go('transition', true);
@@ -1000,7 +1051,48 @@
             .join('');
     }
 
+    function renderSettingsReadOnly() {
+        const sched = state.schedule;
+        const tz = state.userRow?.timezone || 'Asia/Tashkent';
+        $root.innerHTML = `
+            <div class="nf-screen nf-free-settings">
+                <div class="nf-topbar">
+                    <button type="button" class="nf-back" id="bst">← BACK</button>
+                    <h1>Settings</h1>
+                    <span></span>
+                </div>
+                <p class="nf-free-settings-lead">Upgrade to Pro to customize your schedule.</p>
+                <div class="nf-card nf-free-readonly">
+                    <h3 class="nf-free-h3">📅 Work &amp; sleep</h3>
+                    <div>WORK: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(
+            formatTime(sched?.work_end)
+        )}</div>
+                    <div style="margin-top:8px;">SLEEP: ${escapeHtml(
+                        formatTime(sched?.sleep_start)
+                    )} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
+                </div>
+                <div class="nf-card nf-free-readonly">
+                    <h3 class="nf-free-h3">☕ · 🍽️ · 💡</h3>
+                    <p class="nf-free-note">Coffee, meal, and light times are part of Pro — with smart reminders tuned to your shift.</p>
+                </div>
+                <div class="nf-card nf-free-readonly">
+                    <h3 class="nf-free-h3">⏰ Notifications &amp; timezone</h3>
+                    <p class="nf-free-note">Pro unlocks notification controls, weekly insights, and timezone changes.</p>
+                    <p class="nf-free-tz" style="margin:10px 0 0 0;">Current timezone: <strong>${escapeHtml(
+                        tz
+                    )}</strong></p>
+                </div>
+                <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-pro">Upgrade to Pro</button>
+            </div>`;
+        document.getElementById('bst').onclick = back;
+        document.getElementById('btn-settings-pro').onclick = () => openProInvoice();
+    }
+
     function renderSettings() {
+        if (!hasProEntitlement()) {
+            renderSettingsReadOnly();
+            return;
+        }
         const sched = state.schedule;
         const s = state.settings;
         const tz = state.userRow?.timezone || 'Asia/Tashkent';

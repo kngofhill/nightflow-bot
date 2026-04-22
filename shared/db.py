@@ -86,7 +86,11 @@ def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: st
     )
 
 
-def apply_pro_subscription_from_payment(telegram_id: int, subscription_expiration_unix: Optional[int] = None):
+def apply_pro_subscription_from_payment(
+    telegram_id: int,
+    subscription_expiration_unix: Optional[int] = None,
+    telegram_payment_charge_id: Optional[str] = None,
+):
     """Extend Pro access from a successful Telegram Stars subscription payment."""
     from datetime import datetime, timedelta, timezone
 
@@ -98,6 +102,8 @@ def apply_pro_subscription_from_payment(telegram_id: int, subscription_expiratio
         ).isoformat()
     else:
         upd["pro_expires_at"] = (now + timedelta(days=30)).isoformat()
+    if telegram_payment_charge_id:
+        upd["telegram_payment_charge_id"] = str(telegram_payment_charge_id)
     return supabase_client.table("users").update(upd).eq("telegram_id", int(telegram_id)).execute()
 
 
@@ -105,7 +111,13 @@ def revoke_pro_subscription(telegram_id: int):
     """Immediately revoke paid Pro (e.g. Stars refund)."""
     return (
         supabase_client.table("users")
-        .update({"pro_expires_at": None, "last_pro_payment_at": None})
+        .update(
+            {
+                "pro_expires_at": None,
+                "last_pro_payment_at": None,
+                "telegram_payment_charge_id": None,
+            }
+        )
         .eq("telegram_id", int(telegram_id))
         .execute()
     )
