@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Any, Optional, Dict
 from dotenv import load_dotenv
 import supabase
 
@@ -128,18 +128,21 @@ def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: st
 
 def apply_pro_subscription_from_payment(
     telegram_id: int,
-    subscription_expiration_unix: Optional[int] = None,
+    subscription_expiration: Any = None,
     telegram_payment_charge_id: Optional[str] = None,
     is_recurring: Optional[bool] = None,
 ):
-    """Extend Pro access from a successful Telegram Stars payment (recurring or one-time)."""
+    """Extend Pro access from a successful Telegram Stars payment (recurring or one-time).
+
+    ``subscription_expiration`` is ``SuccessfulPayment.subscription_expiration_date`` (int unix or datetime).
+    """
     from datetime import datetime, timezone
 
     from shared.subscription import compute_pro_expires_after_payment
 
     now = datetime.now(timezone.utc)
     row = get_user_by_telegram_id(telegram_id) or {}
-    new_exp = compute_pro_expires_after_payment(row, now, subscription_expiration_unix)
+    new_exp = compute_pro_expires_after_payment(row, now, subscription_expiration)
 
     upd: Dict[str, Any] = {
         "last_pro_payment_at": now.isoformat(),

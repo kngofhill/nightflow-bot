@@ -38,14 +38,27 @@ def should_skip_telegram_star_cancel(user_row: Optional[Dict[str, Any]]) -> bool
     return user_row.get("last_payment_is_recurring") is False
 
 
+def _parse_telegram_subscription_expiration(value: Any) -> Optional[datetime]:
+    """``SuccessfulPayment.subscription_expiration_date`` may be unix (int) or ``datetime`` (PTB 21+)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _parse_dt(value)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+    if isinstance(value, str):
+        return _parse_dt(value)
+    return None
+
+
 def compute_pro_expires_after_payment(
     user_row: Optional[Dict[str, Any]],
     now: datetime,
-    subscription_expiration_unix: Optional[int] = None,
+    subscription_expiration: Optional[Any] = None,
 ) -> datetime:
     """After a successful Stars payment, extend Pro by 30 days from current paid expiry or from now.
 
-    If Telegram sends ``subscription_expiration_date``, the later of (computed, Telegram) is used
+    If Telegram sends ``subscription_expiration_date`` (unix or datetime), the later of (computed, Telegram) is used
     so renewals are never shorter than the invoice period.
     """
     now = now.astimezone(timezone.utc)
@@ -54,12 +67,9 @@ def compute_pro_expires_after_payment(
         new_exp = current + timedelta(days=PRO_SUBSCRIPTION_DAYS)
     else:
         new_exp = now + timedelta(days=PRO_SUBSCRIPTION_DAYS)
-    if subscription_expiration_unix is not None:
-        from_telegram = datetime.fromtimestamp(
-            int(subscription_expiration_unix), tz=timezone.utc
-        )
-        if from_telegram > new_exp:
-            new_exp = from_telegram
+    from_telegram = _parse_telegram_subscription_expiration(subscription_expiration)
+    if from_telegram is not None and from_telegram > new_exp:
+        new_exp = from_telegram
     return new_exp
 
 
