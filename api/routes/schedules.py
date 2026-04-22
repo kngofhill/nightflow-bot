@@ -6,7 +6,13 @@ import json
 sys.path.append(".")
 
 from shared.db import supabase_client
-from shared.schedule_utils import calculate_optimal_schedule, time_to_str, str_to_time, safe_json_parse
+from shared.schedule_utils import (
+    calculate_optimal_schedule,
+    time_to_str,
+    str_to_time,
+    safe_json_parse,
+    classify_shift_type_from_work_start,
+)
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
 from api.request_util import get_user_from_request
@@ -22,12 +28,7 @@ def _user_timezone(user_id: str) -> str:
 
 
 def _shift_type_from_work_start(work_start) -> str:
-    h = work_start.hour
-    if h >= 20 or h <= 4:
-        return "night"
-    if 12 <= h < 20:
-        return "evening"
-    return "day"
+    return classify_shift_type_from_work_start(work_start)
 
 
 def _sync_today_daily_from_times(

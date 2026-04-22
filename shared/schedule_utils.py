@@ -45,6 +45,18 @@ def safe_json_parse(data: Any) -> Any:
     return data
 
 
+def classify_shift_type_from_work_start(work_start: time) -> str:
+    """
+    Heuristic from clock-in: night shift usually starts 19:00+ or early morning; afternoon 12-18:59 is "evening".
+    """
+    h = work_start.hour
+    if h >= 19 or h <= 4:
+        return "night"
+    if 12 <= h < 19:
+        return "evening"
+    return "day"
+
+
 def calculate_optimal_schedule(
     work_start: time,
     work_end: time,
@@ -58,12 +70,7 @@ def calculate_optimal_schedule(
     if work_end_dt <= work_start_dt:
         work_end_dt += timedelta(days=1)
 
-    if work_start.hour >= 20 or work_start.hour <= 4:
-        shift_type = "night"
-    elif 12 <= work_start.hour < 20:
-        shift_type = "evening"
-    else:
-        shift_type = "day"
+    shift_type = classify_shift_type_from_work_start(work_start)
 
     if sleep_start_override and sleep_end_override:
         sleep_start = sleep_start_override

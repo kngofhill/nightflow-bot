@@ -96,34 +96,27 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
-def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: str):
-    """Insert or update user by telegram_id. Preserves trial / subscription fields on update."""
+def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: Optional[str] = None):
+    """Insert or update user by telegram_id. Preserves trial / subscription fields on update.
+    If ``shift_type`` is omitted (None), existing ``shift_type`` is not changed on update.
+    """
     existing = get_user_by_telegram_id(telegram_id)
     if existing:
-        return (
-            supabase_client.table("users")
-            .update(
-                {
-                    "username": username,
-                    "first_name": first_name,
-                    "shift_type": shift_type,
-                }
-            )
-            .eq("telegram_id", telegram_id)
-            .execute()
-        )
-    return (
-        supabase_client.table("users")
-        .insert(
-            {
-                "telegram_id": telegram_id,
-                "username": username,
-                "first_name": first_name,
-                "shift_type": shift_type,
-            }
-        )
-        .execute()
-    )
+        update_payload: Dict[str, Any] = {
+            "username": username,
+            "first_name": first_name,
+        }
+        if shift_type is not None:
+            update_payload["shift_type"] = shift_type
+        return supabase_client.table("users").update(update_payload).eq("telegram_id", telegram_id).execute()
+    ins: Dict[str, Any] = {
+        "telegram_id": telegram_id,
+        "username": username,
+        "first_name": first_name,
+    }
+    if shift_type is not None:
+        ins["shift_type"] = shift_type
+    return supabase_client.table("users").insert(ins).execute()
 
 
 def apply_pro_subscription_from_payment(
