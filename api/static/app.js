@@ -74,6 +74,8 @@
         dayOffResume: 'tomorrow',
         dayOffDate: '',
         rotatingDemo: false,
+        /** Active row from GET /schedules/rotating when user.shift_type === 'rotating' */
+        rotatingPattern: null,
     };
 
     const $root = document.getElementById('screen-root');
@@ -416,6 +418,25 @@
 
     function isRotatingUi() {
         return state.userRow?.shift_type === 'rotating' || state.rotatingDemo === true;
+    }
+
+    function isRotatingServer() {
+        return state.userRow?.shift_type === 'rotating';
+    }
+
+    function rotatingShiftsObj() {
+        const sh = state.rotatingPattern && state.rotatingPattern.shifts;
+        return sh && typeof sh === 'object' ? sh : {};
+    }
+
+    function patternHasDayWork() {
+        const s = rotatingShiftsObj();
+        const id = s.pattern_id || 'pitman_2_2_3';
+        if (id === 'pat_4n4o') return false;
+        if (id === 'block_rotation') {
+            return (Number(s.block_days) || 0) > 0;
+        }
+        return true;
     }
 
     function parseTimeToMinutes(t) {
@@ -834,9 +855,10 @@
     }
 
     const PATTERN_PRESETS = [
-        { label: '2 nights, 2 days, 2 off', value: 'n2d2o2' },
-        { label: '4 nights, 3 off', value: 'n4o3' },
-        { label: 'Custom (demo)', value: 'custom' },
+        { label: '2-2-3 (Pitman) — 14d', value: 'pitman_2_2_3' },
+        { label: 'Block: nights, then days (optionally off)', value: 'block_rotation' },
+        { label: '4n / 4off / 4d / 4off — 16d', value: 'pat_4n4o4d4o' },
+        { label: '4n / 4off (nights only) — 8d', value: 'pat_4n4o' },
     ];
 
     function renderSetupRotating() {
@@ -861,56 +883,98 @@
                         ).join('')}
                     </select>
                 </div>
-                <p class="nf-field-label">⚙️ SHIFT HOURS</p>
+                <p class="nf-field-label" id="rot-block-label" style="display:none;">⬛ BLOCK LENGTHS (block rotation only)</p>
+                <div class="nf-card" id="rot-block-wrap" style="display:none;">
+                    <div class="nf-row"><span>Night days</span><input type="number" min="1" class="nf-select" id="rot-bn" value="14" style="max-width:100px;"/></div>
+                    <div class="nf-row" style="margin-top:8px;"><span>Day days</span><input type="number" min="0" class="nf-select" id="rot-bd" value="14" style="max-width:100px;"/></div>
+                    <div class="nf-row" style="margin-top:8px;"><span>Off days</span><input type="number" min="0" class="nf-select" id="rot-bo" value="0" style="max-width:100px;"/></div>
+                </div>
+                <p class="nf-field-label">⚙️ SHIFT TEMPLATES</p>
                 <div class="nf-card">
                     <div style="margin-bottom:12px;"><strong>🌙 NIGHT</strong></div>
-                    <div class="nf-row"><span>Work</span>${selectTimeHtml('', '22:00', 'rn_ws')}${selectTimeHtml('', '06:00', 'rn_we')}</div>
+                    <div class="nf-row"><span>Work</span>${selectTimeHtml('', '19:00', 'rn_ws')}${selectTimeHtml('', '07:00', 'rn_we')}</div>
                     <div class="nf-row" style="margin-top:8px;"><span>Sleep</span>${selectTimeHtml('', '08:00', 'rn_ss')}${selectTimeHtml('', '16:00', 'rn_se')}</div>
+                    <hr class="rot-day-hr" style="border:none;border-top:1px solid var(--nf-border);margin:14px 0;" />
+                    <div class="rot-day-block" style="margin-bottom:12px;"><strong>☀️ DAY</strong></div>
+                    <div class="nf-row rot-day-block"><span>Work</span>${selectTimeHtml('', '07:00', 'rd_ws')}${selectTimeHtml('', '19:00', 'rd_we')}</div>
+                    <div class="nf-row rot-day-block" style="margin-top:8px;"><span>Sleep</span>${selectTimeHtml('', '22:00', 'rd_ss')}${selectTimeHtml('', '06:00', 'rd_se')}</div>
+                    <div class="rot-4n4o-note nf-muted" style="display:none;margin-top:10px;">Day block hidden — this pattern has no day shifts.</div>
                     <hr style="border:none;border-top:1px solid var(--nf-border);margin:14px 0;" />
-                    <div style="margin-bottom:12px;"><strong>☀️ DAY</strong></div>
-                    <div class="nf-row"><span>Work</span>${selectTimeHtml('', '06:00', 'rd_ws')}${selectTimeHtml('', '14:00', 'rd_we')}</div>
-                    <div class="nf-row" style="margin-top:8px;"><span>Sleep</span>${selectTimeHtml('', '22:00', 'rd_ss')}${selectTimeHtml('', '06:00', 'rd_se')}</div>
-                    <hr style="border:none;border-top:1px solid var(--nf-border);margin:14px 0;" />
-                    <div><strong>😴 OFF</strong><div class="nf-muted" style="margin-top:6px;">No schedule</div></div>
+                    <div><strong>😴 OFF</strong><div class="nf-muted" style="margin-top:6px;">Handled by the pattern; sleep aligns to the next shift.</div></div>
                 </div>
                 <button type="button" class="nf-cta" id="btn-create-rot">CREATE SCHEDULE</button>
-                <p class="nf-sub nf-center">Rotating sync with the server is not available yet — demo mode will show the rotating dashboard.</p>
+                <p class="nf-sub nf-center">Saves to your account. Today’s plan updates from the pattern.</p>
             </div>`;
-        document.getElementById('btn-sr-back').onclick = () => go('onboarding', false);
+        document.getElementById('btn-sr-back').onclick = () => {
+            if (state.stack && state.stack.length) back();
+            else go('onboarding', false);
+        };
         initTimePickerButtons($root);
+        const patSel = document.getElementById('rot-pattern');
+        const syncRotForm = () => {
+            const v = patSel ? patSel.value : 'pitman_2_2_3';
+            const block = v === 'block_rotation';
+            const d4n4o = v === 'pat_4n4o';
+            const bw = document.getElementById('rot-block-wrap');
+            const bl = document.getElementById('rot-block-label');
+            if (bw) bw.style.display = block ? 'block' : 'none';
+            if (bl) bl.style.display = block ? 'block' : 'none';
+            $root.querySelectorAll('.rot-day-block').forEach((el) => {
+                el.style.display = d4n4o ? 'none' : '';
+            });
+            const h = $root.querySelector('.rot-day-hr');
+            if (h) h.style.display = d4n4o ? 'none' : '';
+            const note = $root.querySelector('.rot-4n4o-note');
+            if (note) note.style.display = d4n4o ? 'block' : 'none';
+        };
+        if (patSel) patSel.onchange = syncRotForm;
+        syncRotForm();
         document.getElementById('btn-create-rot').onclick = async () => {
+            const patternId = patSel ? patSel.value : 'pitman_2_2_3';
+            const start = document.getElementById('rot-start').value;
+            if (!start) {
+                tg.showAlert('Pick a pattern start date');
+                return;
+            }
+            const body = {
+                pattern_id: patternId,
+                pattern_start_date: start,
+                night: {
+                    work_start: document.getElementById('rn_ws').value,
+                    work_end: document.getElementById('rn_we').value,
+                    sleep_start: document.getElementById('rn_ss').value,
+                    sleep_end: document.getElementById('rn_se').value,
+                },
+            };
+            if (patternId !== 'pat_4n4o') {
+                body.day = {
+                    work_start: document.getElementById('rd_ws').value,
+                    work_end: document.getElementById('rd_we').value,
+                    sleep_start: document.getElementById('rd_ss').value,
+                    sleep_end: document.getElementById('rd_se').value,
+                };
+            }
+            if (patternId === 'block_rotation') {
+                body.block_nights = Math.max(1, parseInt(document.getElementById('rot-bn').value, 10) || 1);
+                body.block_days = Math.max(0, parseInt(document.getElementById('rot-bd').value, 10) || 0);
+                body.block_off = Math.max(0, parseInt(document.getElementById('rot-bo').value, 10) || 0);
+            }
             renderLoading();
-            const ws = document.getElementById('rn_ws').value;
-            const we = document.getElementById('rn_we').value;
-            const ss = document.getElementById('rn_ss').value;
-            const se = document.getElementById('rn_se').value;
             try {
-                await api('/users/me', {
+                const res = await api(`/schedules/rotating?telegram_id=${user.id}`, {
                     method: 'POST',
-                    json: {
-                        telegram_id: user.id,
-                        username: user.username || '',
-                        first_name: user.first_name || '',
-                        shift_type: 'rotating',
-                    },
-                });
-                const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
-                    method: 'POST',
-                    json: {
-                        work_start: ws,
-                        work_end: we,
-                        sleep_start: ss,
-                        sleep_end: se,
-                    },
+                    json: body,
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    $root.innerHTML = `<div class="nf-error">${escapeHtml(err.error || 'Could not save')}</div>`;
+                    $root.innerHTML = `<div class="nf-error">${escapeHtml(
+                        err.error || 'Could not save rotating pattern'
+                    )}</div>`;
                     return;
                 }
-                state.rotatingDemo = true;
+                state.rotatingDemo = false;
                 try {
-                    localStorage.setItem('nightflow_rotating_demo', '1');
+                    localStorage.removeItem('nightflow_rotating_demo');
                 } catch (e) {}
                 await loadUserAndSchedule();
             } catch (e) {
@@ -1041,8 +1105,24 @@
                 <div class="nf-card">
                     <div class="nf-card-label">Today</div>
                     <div class="nf-today-line">${escapeHtml(formatLongDate(today).toUpperCase())}</div>
-                    ${rotating && !isOff ? `<div class="nf-today-sub">🌙 Night · Day 1 of 2</div>` : ''}
-                </div>`;
+                    ${
+                        rotating && !isOff && (sched.pattern_slot || sched.pattern_id)
+                            ? `<div class="nf-today-sub">${escapeHtml(
+                                  (String(sched.pattern_slot || 'today').toUpperCase() || 'TODAY') +
+                                      (sched.pattern_id
+                                          ? ' · ' + String(sched.pattern_id).replace(/_/g, ' ')
+                                          : '')
+                              )}</div>`
+                            : ''
+                    }
+                </div>
+                ${
+                    !isOff && sched.transition_advice
+                        ? `<p class="nf-sub" style="padding:0 12px 8px;margin:0;line-height:1.35;">${escapeHtml(
+                              sched.transition_advice
+                          )}</p>`
+                        : ''
+                }`;
 
         if (isOff) {
             body += `
@@ -1604,26 +1684,69 @@
                   formatProExpiryDate(proExp)
               )}</strong>.</p>`
             : '';
-        $root.innerHTML = `
-            <div class="nf-screen">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bst">← BACK</button>
-                    <h1>Settings</h1>
-                    <span></span>
+        const rsX = rotatingShiftsObj();
+        const nX = rsX.night || {};
+        const dX = rsX.day || {};
+        const wsnX = (t) => escapeHtml(formatTime(t) || '—');
+        const workSleepBlock = isRotatingServer()
+            ? `<div class="nf-setting-block">
+                    <div class="nf-setting-head">
+                        <h3>🌙 NIGHT (template)</h3>
+                        <button type="button" class="nf-link" id="ed-rot-n">EDIT</button>
+                    </div>
+                    <div class="nf-card">
+                        <div>WORK: ${wsnX(nX.work_start)} – ${wsnX(nX.work_end)}</div>
+                        <div style="margin-top:6px;">SLEEP: ${wsnX(nX.sleep_start)} – ${wsnX(nX.sleep_end)}</div>
+                    </div>
                 </div>
-                ${paidNotice}
-                ${trialPayBlock}
-                <div class="nf-setting-block">
+                ${
+                    patternHasDayWork()
+                        ? `<div class="nf-setting-block">
+                    <div class="nf-setting-head">
+                        <h3>☀️ DAY (template)</h3>
+                        <button type="button" class="nf-link" id="ed-rot-d">EDIT</button>
+                    </div>
+                    <div class="nf-card">
+                        <div>WORK: ${wsnX(dX.work_start)} – ${wsnX(dX.work_end)}</div>
+                        <div style="margin-top:6px;">SLEEP: ${wsnX(dX.sleep_start)} – ${wsnX(dX.sleep_end)}</div>
+                    </div>
+                </div>`
+                        : `<p class="nf-muted" style="padding:0 2px 8px;">Day template hidden — this pattern has no day shifts.</p>`
+                }
+                <div class="nf-card" style="margin-top:0;">
+                    <div class="nf-muted">Active pattern: <strong>${escapeHtml(
+                        String(rsX.pattern_id || '—')
+                    )}</strong></div>
+                    <div class="nf-muted" style="margin-top:6px;">Start date: <strong>${escapeHtml(
+                        String(state.rotatingPattern?.pattern_start_date || '—')
+                    )}</strong></div>
+                </div>`
+            : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>📅 WORK & SLEEP</h3>
                         <button type="button" class="nf-link" id="ed-ws">EDIT</button>
                     </div>
                     <div class="nf-card">
                         <div>WORK: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(formatTime(sched?.work_end))}</div>
-                        <div style="margin-top:6px;">SLEEP: ${escapeHtml(formatTime(sched?.sleep_start))} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
+                        <div style="margin-top:6px;">SLEEP: ${escapeHtml(formatTime(sched?.sleep_start))} – ${escapeHtml(
+                  formatTime(sched?.sleep_end)
+              )}</div>
                     </div>
-                </div>
-                <div class="nf-setting-block">
+                </div>`;
+        const planWindowsBlock = isRotatingServer()
+            ? `<div class="nf-setting-block">
+                    <div class="nf-setting-head">
+                        <h3>☕·🍽·💡 TODAY (from pattern)</h3>
+                        <span class="nf-muted" style="font-size:0.8rem;">Auto</span>
+                    </div>
+                    <div class="nf-card">
+                        <div class="nf-muted" style="margin-bottom:6px;">Coffee, meals, and light are computed for <strong>today’s</strong> slot from your work/sleep template.</div>
+                        <div><strong>☕</strong> ${coffeeSummary(sched)}</div>
+                        <div style="margin-top:6px;"><strong>🍽</strong> ${mealSummary(sched)}</div>
+                        <div style="margin-top:6px;"><strong>💡</strong> ${lightSummary(sched)}</div>
+                    </div>
+                </div>`
+            : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>☕ COFFEE TIMES</h3>
                         <button type="button" class="nf-link" id="ed-co">EDIT</button>
@@ -1650,7 +1773,27 @@
                         (Work &amp; sleep <strong>EDIT</strong> alone does not).
                     </p>
                     <button type="button" class="nf-cta" id="btn-rebuild-rec">↻ Rebuild recommended schedule</button>
+                </div>`;
+        const switchToRotatingCard =
+            !isRotatingServer() && (state.userRow?.shift_type === 'constant' || !state.userRow?.shift_type)
+                ? `<div class="nf-card" style="margin:12px 0;">
+                        <h3 class="nf-free-h3" style="margin:0 0 8px;">🔄 Rotating schedule</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Switch to a 2-2-3, block, or 4-4-4-4 style pattern. Your constant template will be turned off in favor of the new pattern.</p>
+                        <button type="button" class="nf-cta-secondary" id="btn-switch-rot" style="width:100%;">Switch to rotating schedule</button>
+                   </div>`
+                : '';
+        $root.innerHTML = `
+            <div class="nf-screen">
+                <div class="nf-topbar">
+                    <button type="button" class="nf-back" id="bst">← BACK</button>
+                    <h1>Settings</h1>
+                    <span></span>
                 </div>
+                ${paidNotice}
+                ${trialPayBlock}
+                ${workSleepBlock}
+                ${planWindowsBlock}
+                ${switchToRotatingCard}
                 <p class="nf-field-label">⏰ NOTIFICATIONS</p>
                 <div class="nf-card">
                     ${toggleRow('🔔 All Notifications', 'notifAll', s.notifAll)}
@@ -1686,10 +1829,25 @@
         document.getElementById('bst').onclick = back;
         const btnStars = document.getElementById('btn-settings-stars');
         if (btnStars) btnStars.onclick = () => openProInvoice();
-        document.getElementById('ed-ws').onclick = () => openEditWork();
-        document.getElementById('ed-co').onclick = () => openEditCoffee();
-        document.getElementById('ed-me').onclick = () => openEditMeals();
-        document.getElementById('ed-li').onclick = () => openEditLight();
+        const bsr = document.getElementById('btn-switch-rot');
+        if (bsr) {
+            bsr.onclick = () => go('setup_rot', true);
+        }
+        if (isRotatingServer()) {
+            const ern = document.getElementById('ed-rot-n');
+            if (ern) ern.onclick = () => openEditRotatingTemplate('night');
+            const erd = document.getElementById('ed-rot-d');
+            if (erd) erd.onclick = () => openEditRotatingTemplate('day');
+        } else {
+            const o = document.getElementById('ed-ws');
+            if (o) o.onclick = () => openEditWork();
+            const oc = document.getElementById('ed-co');
+            if (oc) oc.onclick = () => openEditCoffee();
+            const om = document.getElementById('ed-me');
+            if (om) om.onclick = () => openEditMeals();
+            const ol = document.getElementById('ed-li');
+            if (ol) ol.onclick = () => openEditLight();
+        }
         const btnRe = document.getElementById('btn-rebuild-rec');
         if (btnRe) {
             btnRe.onclick = async () => {
@@ -1881,6 +2039,74 @@
             work_end: pick(sched?.work_end, '06:00'),
             sleep_start: pick(sched?.sleep_start, '08:00'),
             sleep_end: pick(sched?.sleep_end, '16:00'),
+        };
+    }
+
+    function openEditRotatingTemplate(which) {
+        if (!isRotatingServer() || !state.rotatingPattern) {
+            tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
+            return;
+        }
+        const sh = { ...rotatingShiftsObj() };
+        const sec = which === 'day' ? sh.day || {} : sh.night || {};
+        const ws = formatTime(sec.work_start) || (which === 'day' ? '07:00' : '19:00');
+        const we = formatTime(sec.work_end) || (which === 'day' ? '19:00' : '07:00');
+        const ss = formatTime(sec.sleep_start) || (which === 'day' ? '22:00' : '08:00');
+        const se = formatTime(sec.sleep_end) || (which === 'day' ? '06:00' : '16:00');
+        const label = which === 'day' ? 'DAY' : 'NIGHT';
+        openModal(`
+            <div class="nf-topbar" style="margin-bottom:12px;">
+                <button type="button" class="nf-back" id="m-close-rt">←</button>
+                <h1 style="font-size:1rem;">${label} template</h1>
+                <span></span>
+            </div>
+            <p class="nf-field-label">🌙 WORK</p>
+            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ws, 'rt-ws')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', we, 'rt-we')}</div>
+            <p class="nf-field-label">😴 SLEEP</p>
+            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'rt-ss')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'rt-se')}</div>
+            <p class="nf-sub">Saves to your pattern. Today’s plan refreshes on the next load.</p>
+            <div class="nf-row-btns">
+                <button type="button" class="nf-cta" id="m-savert">SAVE</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="m-canrt">CANCEL</button>
+            </div>`);
+        document.getElementById('m-close-rt').onclick = closeModal;
+        document.getElementById('m-canrt').onclick = closeModal;
+        document.getElementById('m-savert').onclick = async () => {
+            const payload = {
+                [which === 'day' ? 'day' : 'night']: {
+                    work_start: document.getElementById('rt-ws').value,
+                    work_end: document.getElementById('rt-we').value,
+                    sleep_start: document.getElementById('rt-ss').value,
+                    sleep_end: document.getElementById('rt-se').value,
+                },
+            };
+            closeModal();
+            renderLoading();
+            try {
+                const res = await api(`/schedules/rotating?telegram_id=${user.id}`, {
+                    method: 'PATCH',
+                    json: payload,
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save');
+                    state.screen = 'settings';
+                    render();
+                    return;
+                }
+                state.rotatingPattern = data;
+                await loadUserAndSchedule();
+                state.screen = 'settings';
+                state.stack = ['dashboard'];
+                render();
+            } catch (e) {
+                console.error(e);
+                tg.showAlert('Request failed');
+                state.screen = 'settings';
+                render();
+            }
         };
     }
 
@@ -2566,6 +2792,7 @@
 
     async function loadUserAndSchedule() {
         state.stack = [];
+        state.rotatingPattern = null;
         try {
             const ur = await api(`/users/me?telegram_id=${user.id}`);
             if (ur.ok) {
@@ -2574,6 +2801,14 @@
             }
         } catch (e) {
             console.warn(e);
+        }
+        if (isRotatingServer()) {
+            try {
+                const rp = await api(`/schedules/rotating?telegram_id=${user.id}`);
+                if (rp.ok) state.rotatingPattern = await rp.json();
+            } catch (e) {
+                console.warn('rotating pattern', e);
+            }
         }
 
         try {

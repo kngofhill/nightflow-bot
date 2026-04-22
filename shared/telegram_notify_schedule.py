@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Set, Tuple
 from shared.db import supabase_client
 from shared.schedule_utils import safe_json_parse, str_to_time
+from shared.rotating_engine import build_rotating_day_from_pattern_row
 from shared.time_utils import get_user_now_from_timezone_name, combine_local_date_and_time
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,47 @@ def fetch_effective_schedule_today(user_id: str, today_str: str) -> Tuple[str, O
     Same merge as /schedules/daily/today: daily row wins work/sleep; coffee/meal/bright from constant.
     Pro-only windows are not stripped here — caller is Pro-only.
     """
+    urow = (
+        supabase_client.table("users")
+        .select("shift_type")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    shift_t = (urow.data[0] or {}).get("shift_type") if urow.data else None
+    try:
+        local = date.fromisoformat(today_str[:10])
+    except (ValueError, TypeError):
+        local = date.today()
+
+    daily = (
+        supabase_client.table("daily_schedules")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("date", today_str)
+        .limit(1)
+        .execute()
+    )
+    if daily.data:
+        dr = daily.data[0]
+        if dr.get("shift_type") == "off":
+            return "off", None
+
+    if shift_t == "rotating":
+        rpat = (
+            supabase_client.table("rotating_patterns")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if rpat and rpat.data:
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local)
+            if comp is not None:
+                return "ok", comp
+        return "no_constant", None
+
     const = (
         supabase_client.table("constant_schedules")
         .select("*")
@@ -103,15 +145,6 @@ def fetch_effective_schedule_today(user_id: str, today_str: str) -> Tuple[str, O
     c0 = dict(const.data[0])
     for f in ("coffee_windows", "meal_windows", "brightness_windows"):
         c0[f] = safe_json_parse(c0.get(f))
-
-    daily = (
-        supabase_client.table("daily_schedules")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("date", today_str)
-        .limit(1)
-        .execute()
-    )
 
     if daily.data:
         row = dict(daily.data[0])

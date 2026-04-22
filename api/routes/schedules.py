@@ -8,6 +8,7 @@ sys.path.append(".")
 from shared.db import supabase_client
 from shared.schedule_utils import calculate_optimal_schedule, time_to_str, str_to_time, safe_json_parse
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
+from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
@@ -60,6 +61,219 @@ def _sync_today_daily_from_times(
         daily_payload["user_id"] = user_id
         daily_payload["date"] = today
         supabase_client.table("daily_schedules").insert(daily_payload).execute()
+
+
+def _valid_rotating_pattern_id(pid: str) -> bool:
+    return pid in (
+        "pitman_2_2_3",
+        "block_rotation",
+        "pat_4n4o4d4o",
+        "pat_4n4o",
+    )
+
+
+def _cycle_len_for_shifts(data: dict) -> int:
+    pid = str(data.get("pattern_id", ""))
+    if pid == "pitman_2_2_3":
+        return 14
+    if pid == "pat_4n4o4d4o":
+        return 16
+    if pid == "pat_4n4o":
+        return 8
+    n = int(data.get("block_nights", 0) or 0)
+    m = int(data.get("block_days", 0) or 0)
+    o = int(data.get("block_off", 0) or 0)
+    c = n + m + o
+    return c if c > 0 else 7
+
+
+@bp.route("/rotating", methods=["GET"])
+def get_rotating():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+    r = (
+        supabase_client.table("rotating_patterns")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .limit(1)
+        .execute()
+    )
+    if not r.data:
+        return jsonify({"error": "No active rotating pattern"}), 404
+    row = dict(r.data[0])
+    for k in ("shifts",):
+        if isinstance(row.get(k), str):
+            try:
+                row[k] = json.loads(row[k])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                row[k] = {}
+    return jsonify(row)
+
+
+@bp.route("/rotating", methods=["POST", "PUT"])
+def upsert_rotating():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
+    data = request.get_json(silent=True) or {}
+    sh = data.get("shifts")
+    if not isinstance(sh, dict):
+        sh = {}
+    for k in ("pattern_id", "block_nights", "block_days", "block_off", "night", "day"):
+        if k in data and data[k] is not None:
+            sh[k] = data[k]
+    pid = str(sh.get("pattern_id") or data.get("pattern_id", ""))
+    if not _valid_rotating_pattern_id(pid):
+        return jsonify({"error": "Invalid pattern_id", "code": "invalid_pattern"}), 400
+
+    start = data.get("pattern_start_date") or data.get("patternStartDate")
+    if not start:
+        return jsonify({"error": "pattern_start_date required (YYYY-MM-DD)"}), 400
+    if isinstance(start, str) and len(start) >= 10:
+        start = start[:10]
+    name = (data.get("pattern_name") or sh.get("patternName") or pid)[:200]
+    c_len = int(data.get("cycle_days") or sh.get("cycleLen") or _cycle_len_for_shifts({**sh, "pattern_id": pid}))
+
+    sh = {**sh, "pattern_id": pid}
+    if "night" in sh and isinstance(sh["night"], dict):
+        for k, v in list(sh["night"].items()):
+            if v is not None and k in ("work_start", "work_end", "sleep_start", "sleep_end") and v != "":
+                t = str_to_time(str(v)[:8])
+                if t:
+                    sh["night"][k] = time_to_str(t)
+    if "day" in sh and isinstance(sh.get("day"), dict):
+        for k, v in sh["day"].items():
+            if v is not None and k in ("work_start", "work_end", "sleep_start", "sleep_end") and v != "":
+                t = str_to_time(str(v)[:8])
+                if t:
+                    sh["day"][k] = time_to_str(t)
+    if not pattern_includes_day_work(pid, int(sh.get("block_days", 14) or 0), sh):
+        if "day" in sh:
+            sh["day"] = None
+
+    payload = {
+        "user_id": user_id,
+        "pattern_name": name,
+        "cycle_days": c_len,
+        "pattern_start_date": start,
+        "shifts": sh,
+        "active": True,
+    }
+
+    supabase_client.table("rotating_patterns").update({"active": False}).eq("user_id", user_id).eq(
+        "active", True
+    ).execute()
+    supabase_client.table("constant_schedules").update({"active": False}).eq("user_id", user_id).eq(
+        "active", True
+    ).execute()
+    supabase_client.table("rotating_patterns").insert(payload).execute()
+    supabase_client.table("users").update({"shift_type": "rotating"}).eq("id", user_id).execute()
+    r = (
+        supabase_client.table("rotating_patterns")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .limit(1)
+        .execute()
+    )
+    row = r.data[0] if r.data else payload
+    return jsonify(row)
+
+
+@bp.route("/rotating", methods=["PATCH"])
+def patch_rotating():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
+    r0 = (
+        supabase_client.table("rotating_patterns")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .limit(1)
+        .execute()
+    )
+    if not r0.data:
+        return jsonify({"error": "No active rotating pattern"}), 404
+
+    data = request.get_json(silent=True) or {}
+    row = dict(r0.data[0])
+    sh = row.get("shifts") or {}
+    if isinstance(sh, str):
+        sh = safe_json_parse(sh) or {}
+    if not isinstance(sh, dict):
+        sh = {}
+    if "shifts" in data and isinstance(data["shifts"], dict):
+        sh = {**sh, **data["shifts"]}
+    else:
+        for k in (
+            "pattern_id",
+            "block_nights",
+            "block_days",
+            "block_off",
+            "night",
+            "day",
+        ):
+            if k in data:
+                sh[k] = data[k]
+
+    for sec in ("night", "day"):
+        if sec in sh and sh[sec] is not None and not isinstance(sh[sec], dict):
+            return jsonify({"error": f"shifts.{sec} must be an object or null"}), 400
+        if isinstance(sh.get(sec), dict):
+            for k, v in sh[sec].items():
+                if v is not None and k in ("work_start", "work_end", "sleep_start", "sleep_end") and v != "":
+                    t = str_to_time(str(v)[:8])
+                    if t:
+                        sh[sec][k] = time_to_str(t)
+    if "pattern_start_date" in data and data["pattern_start_date"]:
+        pstart = str(data["pattern_start_date"])[:10]
+    else:
+        pstart = row.get("pattern_start_date")
+
+    old_sh = row.get("shifts") or {}
+    if isinstance(old_sh, str):
+        old_sh = safe_json_parse(old_sh) or {}
+    if not isinstance(old_sh, dict):
+        old_sh = {}
+    pid = str(sh.get("pattern_id") or old_sh.get("pattern_id") or "pitman_2_2_3")
+    if not _valid_rotating_pattern_id(pid):
+        return jsonify({"error": "Invalid pattern_id", "code": "invalid_pattern"}), 400
+    sh["pattern_id"] = pid
+
+    if not pattern_includes_day_work(pid, int(sh.get("block_days", 14) or 0), sh) and "day" in sh:
+        sh["day"] = None
+
+    upd = {
+        "shifts": sh,
+        "pattern_start_date": pstart,
+    }
+    if "pattern_name" in data and data.get("pattern_name") is not None:
+        upd["pattern_name"] = str(data.get("pattern_name", ""))[:200]
+    if "pattern_id" in sh:
+        c_len = _cycle_len_for_shifts({**sh, "pattern_id": sh["pattern_id"]})
+        upd["cycle_days"] = c_len
+    if data.get("cycle_days") is not None:
+        upd["cycle_days"] = int(data["cycle_days"])
+    supabase_client.table("rotating_patterns").update(upd).eq("id", row["id"]).execute()
+    r2 = (
+        supabase_client.table("rotating_patterns")
+        .select("*")
+        .eq("id", row["id"])
+        .limit(1)
+        .execute()
+    )
+    return jsonify(r2.data[0] if r2.data else row)
 
 
 @bp.route("/constant", methods=["GET"])
@@ -297,6 +511,30 @@ def today_daily():
             row_dict["meal_windows"] = []
             row_dict["brightness_windows"] = []
         return row_dict
+
+    if daily.data:
+        drow = daily.data[0]
+        if drow.get("shift_type") == "off":
+            o = dict(drow)
+            for f in ("coffee_windows", "meal_windows", "brightness_windows"):
+                o[f] = safe_json_parse(o.get(f)) or []
+            return jsonify(_strip_free_windows(o))
+
+    if urow and urow.get("shift_type") == "rotating":
+        rpat = (
+            supabase_client.table("rotating_patterns")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if rpat.data:
+            local = get_user_now_from_timezone_name(timezone).date()
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local)
+            if comp is not None:
+                return jsonify(_strip_free_windows(comp))
+        return jsonify({"error": "No active rotating pattern"}), 404
 
     if daily.data:
         row = daily.data[0]
