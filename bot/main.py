@@ -37,6 +37,7 @@ from shared.subscription import (
     SUBSCRIPTION_PERIOD_SECONDS,
     has_pro_entitlement,
     paid_pro_period_active,
+    _parse_dt,
     within_refund_window,
     subscription_debug_summary,
     subscription_meta_for_user,
@@ -112,6 +113,15 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
         await update.message.reply_text("Billing is not configured (TELEGRAM_TOKEN).")
+        return
+    tid = update.effective_user.id
+    row = get_user_by_telegram_id(tid) or {}
+    if paid_pro_period_active(row):
+        pe = _parse_dt(row.get("pro_expires_at"))
+        until = pe.strftime("%B %d, %Y %H:%M UTC") if pe else "your current period end"
+        await update.message.reply_text(
+            f"You already have an active Pro subscription until {until}. No need to subscribe again."
+        )
         return
     # TESTING ONLY: price is PRO_PRICE_STARS (1 Star); production was 50.
     desc = (

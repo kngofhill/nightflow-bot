@@ -186,6 +186,7 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
 
     return {
         "has_pro_entitlement": has_pro,
+        "active_paid_pro": paid_pro_period_active(user_row, now),
         "trial_ends_at": trial_ends_at,
         "pro_expires_at": pro_expires_at,
         "refund_eligible_until": refund_deadline,

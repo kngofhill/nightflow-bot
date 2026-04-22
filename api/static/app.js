@@ -9,8 +9,47 @@
     const tg = window.Telegram.WebApp;
     tg.expand();
     tg.ready();
-    tg.setHeaderColor('#12121a');
-    tg.setBackgroundColor('#12121a');
+
+    function applyTgTheme() {
+        const p = tg.themeParams || {};
+        if (p.bg_color) {
+            try {
+                tg.setHeaderColor(p.bg_color);
+                tg.setBackgroundColor(p.bg_color);
+            } catch (e) {
+                /* ignore */
+            }
+        } else {
+            try {
+                tg.setHeaderColor('#1c1c1e');
+                tg.setBackgroundColor('#1c1c1e');
+            } catch (e) {
+                /* ignore */
+            }
+        }
+        const r = document.documentElement;
+        if (p.bg_color) {
+            r.style.setProperty('--nf-app-bg', p.bg_color);
+            r.style.setProperty('--nf-bg', p.bg_color);
+        }
+        if (p.secondary_bg_color) {
+            r.style.setProperty('--nf-surface', p.secondary_bg_color);
+            r.style.setProperty('--nf-card', p.secondary_bg_color);
+        }
+        if (p.text_color) r.style.setProperty('--nf-text', p.text_color);
+        if (p.hint_color) r.style.setProperty('--nf-muted', p.hint_color);
+        if (p.button_color) {
+            r.style.setProperty('--nf-primary', p.button_color);
+            r.style.setProperty('--nf-accent', p.button_color);
+        }
+        if (p.link_color) r.style.setProperty('--nf-link', p.link_color);
+    }
+    applyTgTheme();
+    try {
+        tg.onEvent('themeChanged', applyTgTheme);
+    } catch (e) {
+        /* not available in all runtimes */
+    }
 
     const user = tg.initDataUnsafe?.user;
 
@@ -281,34 +320,94 @@
         };
     }
 
+    /** Order times for a night/overnight shift: after-midnight follows PM same \"day\". */
+    function timeSortKeyForSchedule(timeStr, schedule) {
+        const m = parseTimeToMinutes(timeStr);
+        if (!schedule || schedule.work_start == null || schedule.work_end == null) {
+            return m;
+        }
+        const ws = parseTimeToMinutes(schedule.work_start);
+        const we = parseTimeToMinutes(schedule.work_end);
+        if (we >= ws) {
+            return m;
+        }
+        if (m >= ws) {
+            return m;
+        }
+        if (m <= we) {
+            return m + 24 * 60;
+        }
+        return m;
+    }
+
     function collectEvents(schedule) {
         const ev = [];
-        const push = (time, label, icon) => {
-            if (!time) return;
-            ev.push({ time, label, icon, m: parseTimeToMinutes(time) });
-        };
-
+        const seen = new Set();
         const clean = (msg) =>
             String(msg || '')
                 .replace(/\s+/g, ' ')
                 .trim();
+        const push = (time, label, icon) => {
+            if (!time) return;
+            const t = formatTime(time);
+            const lab = clean(label) || 'Event';
+            const k = `${t}|${icon}|${lab}`;
+            if (seen.has(k)) return;
+            seen.add(k);
+            const m = parseTimeToMinutes(t);
+            ev.push({
+                time: t,
+                label: lab,
+                icon,
+                m,
+                sort: timeSortKeyForSchedule(t, schedule),
+            });
+        };
 
+        if (schedule.work_start) {
+            push(schedule.work_start, 'Shift starts', '🌙');
+        }
+        if (schedule.work_end) {
+            push(schedule.work_end, 'Shift ends', '🏁');
+        }
+        if (schedule.sleep_start) {
+            push(schedule.sleep_start, 'Bedtime', '😴');
+        }
+        if (schedule.sleep_end) {
+            push(schedule.sleep_end, 'Wake', '☀️');
+        }
         (schedule.meal_windows || []).forEach((w) => {
-            push(w.time, clean(w.message) || 'Meal', '🍽️');
+            push(w.time, (w && w.message) || 'Meal', '🍽️');
         });
         (schedule.coffee_windows || []).forEach((w) => {
-            push(w.time, clean(w.message) || 'Coffee', '☕');
+            push(w.time, (w && w.message) || 'Coffee', '☕');
         });
         (schedule.brightness_windows || []).forEach((w) => {
-            push(w.time, clean(w.message) || 'Light', '💡');
+            push(w.time, (w && w.message) || 'Light', '💡');
         });
 
-        ev.sort((a, b) => a.m - b.m);
+        ev.sort((a, b) => a.sort - b.sort);
         return ev;
     }
 
     function hasProEntitlement() {
         return !!(state.userRow && state.userRow.has_pro_entitlement);
+    }
+
+    function hasActivePaidPro() {
+        return !!(state.userRow && state.userRow.active_paid_pro);
+    }
+
+    function formatProExpiresUser() {
+        const s = state.userRow && state.userRow.pro_expires_at;
+        if (!s) return '';
+        try {
+            const d = new Date(s);
+            if (Number.isNaN(d.getTime())) return '';
+            return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+        } catch (e) {
+            return '';
+        }
     }
 
     function getNextEvent(schedule) {
@@ -376,10 +475,33 @@
     }
 
     async function openProInvoice() {
+        if (hasActivePaidPro()) {
+            tg.showAlert(
+                `You already have an active Pro subscription until ${
+                    formatProExpiresUser() || 'the end of your current period'
+                }. No need to subscribe again.`
+            );
+            return;
+        }
         try {
             const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 409) {
+                tg.showAlert(
+                    data.error ||
+                        'You already have an active Pro subscription. No need to subscribe again.'
+                );
+                if (data.pro_expires_at && state.userRow) {
+                    state.userRow = {
+                        ...state.userRow,
+                        pro_expires_at: data.pro_expires_at,
+                        active_paid_pro: true,
+                    };
+                }
+                render();
+                return;
+            }
             if (!res.ok) throw new Error('x');
-            const data = await res.json();
             const url = data.url;
             if (!url) throw new Error('x');
             if (typeof tg.openInvoice === 'function') {
@@ -701,9 +823,17 @@
                 </div>`;
         } else {
             const isFree = !hasProEntitlement();
+            const paidPro = hasActivePaidPro();
             // TESTING ONLY — revert ?? fallback to 50 before production
             const stars = state.userRow?.pro_price_stars ?? 1;
-            if (isFree) {
+            if (paidPro) {
+                body += `<div class="nf-pro-active-banner" role="status">
+                    <div class="nf-pro-active-title">Pro active</div>
+                    <p class="nf-pro-active-sub">Paid through ${escapeHtml(
+                        formatProExpiresUser() || '—'
+                    )}</p>
+                </div>`;
+            } else if (isFree) {
                 body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
                     <div class="nf-upgrade-hero-title">Nightflow Pro</div>
                     <p class="nf-upgrade-hero-text">Get notifications, full schedule, weekly insights, and more.</p>
@@ -727,6 +857,8 @@
                     <span class="nf-timeline-hint-ico" aria-hidden="true">✨</span>
                     <p>Upgrade to Pro to see your optimized coffee, meal, and light times.</p>
                 </div>`;
+            } else if (!paidPro) {
+                body += `<p class="nf-trial-hint">You’re on a Pro trial. Subscribe with Stars in Settings to keep Pro after the trial.</p>`;
             }
 
             if (rotating && hasProEntitlement()) {
@@ -821,7 +953,8 @@
                 <p class="nf-muted" style="margin-top:0;">TODAY · ${escapeHtml(
                     new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                 )} · ${escapeHtml((sched.shift_type || '').toUpperCase())}</p>
-                <ul class="nf-list">${lines}</ul>
+                <ul class="nf-list nf-list-schedule">${lines}</ul>
+                <p class="nf-muted nf-schedule-foot">Order follows your shift (overnight times after midnight are listed after evening).</p>
                 <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
             </div>`;
         document.getElementById('bf').onclick = back;
@@ -927,6 +1060,11 @@
                 console.warn('weekly fetch failed', e);
             }
 
+            const hasData =
+                (w.energy && w.energy.some((x) => x && x !== '—')) ||
+                (w.coffee && w.coffee.length) ||
+                (w.meals && w.meals.length) ||
+                (w.sleepPct | 0) > 0;
             $root.innerHTML = `
                 <div class="nf-screen">
                     <div class="nf-topbar">
@@ -935,11 +1073,18 @@
                         <span></span>
                     </div>
                     <div class="nf-week-head">📅 ${escapeHtml(w.range || '')}</div>
-                    <p class="nf-meter-label">ENERGY</p>
-                    <div class="nf-energy-row">
+                    <div class="nf-card" style="margin-bottom:12px;">
+                        <p class="nf-meter-label" style="margin-top:0;">ENERGY (Mon – Sun)</p>
+                        <div class="nf-week-energy">
                         ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-                            .map((d, i) => `<span>${d}<br/>${w.energy?.[i] || '—'}</span>`)
+                            .map(
+                                (d, i) =>
+                                    `<div class="nf-week-day"><span class="nf-week-dow">${d}</span><span class="nf-week-emo" title="${d}">${
+                                        w.energy?.[i] || '—'
+                                    }</span></div>`
+                            )
                             .join('')}
+                        </div>
                     </div>
                     <p class="nf-meter-label">COFFEE</p>
                     ${(
@@ -968,8 +1113,13 @@
                         )
                         .join('')}
                     <p class="nf-meter-label">SLEEP</p>
-                    <div class="nf-meter"><div style="width:${w.sleepPct || 0}%"></div></div>
-                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug">VIEW SUGGESTIONS</button>
+                    <div class="nf-meter" role="img" aria-label="Sleep quality ${w.sleepPct || 0}%"><div class="nf-meter-fill" style="width:${w.sleepPct || 0}%"></div></div>
+                    ${
+                        hasData
+                            ? ''
+                            : '<p class="nf-muted" style="text-align:center;padding:4px 8px 12px;">Log end-of-shift check-ins to build your week-over-week trends here.</p>'
+                    }
+                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug" style="margin-top:8px;">VIEW SUGGESTIONS</button>
                 </div>`;
 
             document.getElementById('bw').onclick = back;
@@ -1113,6 +1263,21 @@
         const canCancel = state.userRow?.can_cancel_star_subscription === true;
         const subCancelled = state.userRow?.subscription_cancelled === true;
         const proExp = state.userRow?.pro_expires_at;
+        const paidPro = hasActivePaidPro();
+        const stars = state.userRow?.pro_price_stars ?? 1;
+        const paidNotice = paidPro
+            ? `<p class="nf-billing-notice nf-billing-top">Pro (paid) through <strong>${escapeHtml(
+                  formatProExpiresUser() || '—'
+              )}</strong></p>`
+            : '';
+        const trialPayBlock =
+            hasProEntitlement() && !paidPro
+                ? `<div class="nf-card nf-card-cta">
+                        <h3 class="nf-free-h3" style="margin:0 0 6px;">Keep Pro with Stars</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 12px;">${stars} Stars / 30 days in Telegram. Extends Pro after your trial.</p>
+                        <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-stars">Pay with Stars</button>
+                   </div>`
+                : '';
         const billingBlock = canCancel
             ? `<div class="nf-card nf-billing-box">
                     <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 Pro billing</h3>
@@ -1131,6 +1296,8 @@
                     <h1>Settings</h1>
                     <span></span>
                 </div>
+                ${paidNotice}
+                ${trialPayBlock}
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>📅 WORK & SLEEP</h3>
@@ -1195,6 +1362,8 @@
             </div>`;
 
         document.getElementById('bst').onclick = back;
+        const btnStars = document.getElementById('btn-settings-stars');
+        if (btnStars) btnStars.onclick = () => openProInvoice();
         document.getElementById('ed-ws').onclick = () => openEditWork();
         document.getElementById('ed-co').onclick = () => openEditCoffee();
         document.getElementById('ed-me').onclick = () => openEditMeals();
@@ -1873,12 +2042,18 @@
         const meals = (sched.meal_windows || []).slice(0, 6);
         const localDateStr = d.toISOString().slice(0, 10);
 
-        const slider = (id, label, minL, maxL) => `
+        const slider = (id, label, minL, maxL) => {
+            const rid = `nf-r-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
+            return `
             <div class="nf-slider-block">
-                <div class="nf-slider-label"><span>${escapeHtml(label)}</span></div>
-                <input type="range" class="nf-range" min="1" max="4" value="2" data-k="${id}" />
-                <div class="nf-scale"><span>${minL}</span><span>${maxL}</span></div>
+                <div class="nf-slider-label">
+                    <span>${escapeHtml(label)}</span>
+                    <output class="nf-range-val" for="${rid}">2</output>
+                </div>
+                <input type="range" class="nf-range" id="${rid}" min="1" max="4" value="2" step="1" data-k="${id}" />
+                <div class="nf-scale" aria-hidden="true"><span>${minL}</span><span>${maxL}</span></div>
             </div>`;
+        };
 
         let html = `
             <div class="nf-screen">
@@ -1917,6 +2092,16 @@
             </div>`;
 
         $root.innerHTML = html;
+        $root.querySelectorAll('input.nf-range').forEach((el) => {
+            const id = el.getAttribute('id');
+            const out = $root.querySelector(`output[for="${id}"]`);
+            const sync = () => {
+                if (out) out.textContent = el.value;
+            };
+            el.addEventListener('input', sync);
+            el.addEventListener('change', sync);
+            sync();
+        });
         document.getElementById('bsum').onclick = back;
         document.getElementById('btn-tell-more').onclick = () => openDetailedLog(localDateStr, coffees, meals);
         document.getElementById('btn-save-sum').onclick = async () => {

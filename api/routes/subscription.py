@@ -16,8 +16,10 @@ from shared.subscription import (
     MSG_CANCEL_ONETIME_EXPLANATION,
     MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK,
     explain_cannot_cancel_star_subscription,
+    paid_pro_period_active,
     subscription_meta_for_user,
     should_skip_telegram_star_cancel,
+    _parse_dt,
 )
 from shared.telegram_invoice import create_invoice_link
 from shared.telegram_star_api import (
@@ -32,12 +34,32 @@ bp = Blueprint("subscription", __name__, url_prefix="/api/v1")
 @bp.route("/subscription/invoice-link", methods=["POST"])
 def create_stars_invoice_link():
     """Return invoice URL for Nightflow Pro (XTR / 30 days). # TESTING ONLY: 1 Star via PRO_PRICE_STARS."""
-    _, err = get_user_from_request()
+    user_id, err = get_user_from_request()
     if err:
         return err
 
     if not TELEGRAM_TOKEN:
         return jsonify({"error": "Billing is not configured"}), 503
+
+    urow = supabase_client.table("users").select("*").eq("id", user_id).execute()
+    if urow.data:
+        row = urow.data[0]
+        if paid_pro_period_active(row):
+            pe = _parse_dt(row.get("pro_expires_at"))
+            until = pe.strftime("%B %d, %Y %H:%M UTC") if pe else "your current period end"
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"You already have an active Pro subscription until {until}. "
+                            "No need to subscribe again."
+                        ),
+                        "code": "already_paid_pro",
+                        "pro_expires_at": row.get("pro_expires_at"),
+                    }
+                ),
+                409,
+            )
 
     prices = [{"label": "1 month", "amount": PRO_PRICE_STARS}]
     url = create_invoice_link(
