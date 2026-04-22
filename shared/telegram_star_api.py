@@ -46,6 +46,14 @@ def edit_user_star_subscription(
     return True, raw
 
 
+def is_telegram_charge_invalid_error(exc_or_msg: object) -> bool:
+    """True when editUserStarSubscription / Stars APIs reject the charge (e.g. one-time payment)."""
+    s = str(exc_or_msg).upper()
+    return "CHARGE_ID_INVALID" in s or (
+        "CHARGE_ID" in s and "INVALID" in s
+    )
+
+
 def format_telegram_cancel_subscription_error(raw_or_exc: object) -> str:
     """Human-readable explanation for failed editUserStarSubscription (for bot + API)."""
     if isinstance(raw_or_exc, Exception):

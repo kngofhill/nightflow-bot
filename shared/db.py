@@ -20,6 +20,11 @@ def _is_missing_telegram_charge_in_keys(upd: Dict[str, Any]) -> bool:
     return "telegram_payment_charge_id" in upd
 
 
+def _is_missing_last_recurring_error(exc: BaseException) -> bool:
+    t = str(exc).lower()
+    return "pgrst204" in t and "last_payment_is_recurring" in t
+
+
 def _is_missing_subscription_flags_error(exc: BaseException) -> bool:
     t = str(exc).lower()
     return "pgrst204" in t and (
@@ -110,6 +115,7 @@ def apply_pro_subscription_from_payment(
     telegram_id: int,
     subscription_expiration_unix: Optional[int] = None,
     telegram_payment_charge_id: Optional[str] = None,
+    is_recurring: Optional[bool] = None,
 ):
     """Extend Pro access from a successful Telegram Stars payment (recurring or one-time)."""
     from datetime import datetime, timezone
@@ -130,6 +136,8 @@ def apply_pro_subscription_from_payment(
         ch = str(telegram_payment_charge_id)
         upd["telegram_payment_charge_id"] = ch
         upd["telegram_subscription_id"] = ch
+    if is_recurring is not None:
+        upd["last_payment_is_recurring"] = bool(is_recurring)
 
     def _try_update(payload: Dict[str, Any]):
         return supabase_client.table("users").update(payload).eq("telegram_id", int(telegram_id)).execute()
@@ -164,6 +172,11 @@ def apply_pro_subscription_from_payment(
         upd2 = {k: v for k, v in upd.items() if k not in ("telegram_payment_charge_id", "telegram_subscription_id")}
         return _try_update(upd2)
 
+    if _is_missing_last_recurring_error(err):
+        logger.warning("last_payment_is_recurring column missing; apply migration 20260422130000.")
+        upd3 = {k: v for k, v in upd.items() if k != "last_payment_is_recurring"}
+        return _try_update(upd3)
+
     raise err
 
 
@@ -176,6 +189,7 @@ def revoke_pro_subscription(telegram_id: int):
         "telegram_subscription_id": None,
         "subscription_cancelled": False,
         "subscription_active": False,
+        "last_payment_is_recurring": None,
     }
     try:
         return supabase_client.table("users").update(full).eq("telegram_id", int(telegram_id)).execute()
@@ -198,6 +212,9 @@ def revoke_pro_subscription(telegram_id: int):
                     "telegram_subscription_id",
                 )
             }
+            return supabase_client.table("users").update(subset).eq("telegram_id", int(telegram_id)).execute()
+        if _is_missing_last_recurring_error(e):
+            subset = {k: v for k, v in full.items() if k != "last_payment_is_recurring"}
             return supabase_client.table("users").update(subset).eq("telegram_id", int(telegram_id)).execute()
         raise
 

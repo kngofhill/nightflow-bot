@@ -16,6 +16,27 @@ SUBSCRIPTION_PERIOD_SECONDS = 2592000  # 30 days — Telegram Stars recurring
 PRO_SUBSCRIPTION_DAYS = 30
 INVOICE_PAYLOAD_NIGHTFLOW_PRO = "nightflow_pro_v1"
 
+# Shown when /cancel or app cancel works without Telegram (one-time XTR, or API fallback)
+MSG_CANCEL_ONETIME_EXPLANATION = (
+    "Your last payment was a one-time Stars purchase (Telegram could not use a recurring subscription for this payment — "
+    "e.g. Subscription_export_missing, or the invoice was sent without subscription_period). "
+    "There is no subscription in Telegram to cancel. "
+    "Nightflow is updated: you will not be charged again unless you pay again. "
+    "You keep Pro until {pro_exp}."
+)
+MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK = (
+    "Telegram does not accept this charge for subscription cancellation (CHARGE_ID_INVALID). "
+    "That usually means the payment was one-time, not a recurring Stars subscription. "
+    "Nightflow is updated: auto-renewal is off in the app. You keep Pro until {pro_exp}."
+)
+
+
+def should_skip_telegram_star_cancel(user_row: Optional[Dict[str, Any]]) -> bool:
+    """True when the last payment was one-time — ``editUserStarSubscription`` does not apply."""
+    if not user_row:
+        return False
+    return user_row.get("last_payment_is_recurring") is False
+
 
 def compute_pro_expires_after_payment(
     user_row: Optional[Dict[str, Any]],
@@ -141,14 +162,16 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
 
     last_pay_exists = bool(last_pay)
     ch_id = (user_row or {}).get("telegram_payment_charge_id") if user_row else None
+    is_onetime = (user_row or {}).get("last_payment_is_recurring") is False
+    # One-time: no Telegram subscription to cancel — DB-only. Recurring/unknown: need charge id to call Telegram (or try + fallback).
     can_cancel = (
         has_pro
         and last_pay_exists
-        and bool(ch_id)
         and not sub_cancel
         and sub_active
         and pro_expires_dt is not None
         and now < pro_expires_dt
+        and (is_onetime or bool(ch_id))
     )
 
     return {
@@ -161,6 +184,9 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
         "trial_days": int(TRIAL_ENTITLEMENT_TIMEDELTA.total_seconds() // 86400),
         "subscription_cancelled": sub_cancel,
         "subscription_active": sub_active,
+        "last_payment_is_recurring": user_row.get("last_payment_is_recurring")
+        if user_row
+        else None,
         "can_cancel_star_subscription": can_cancel,
     }
 
@@ -185,10 +211,11 @@ def explain_cannot_cancel_star_subscription(
             "• No completed Stars payment is stored. This command only applies to paid Pro (not the free trial). "
             "Use /subscribe or pay from the mini-app first."
         )
-    if not user_row.get("telegram_payment_charge_id"):
+    is_onetime = user_row.get("last_payment_is_recurring") is False
+    if not user_row.get("telegram_payment_charge_id") and not is_onetime:
         lines.append(
-            "• No `telegram_payment_charge_id` in the database — Telegram needs it to turn off renewals. "
-            "Apply the Supabase migration for that column, then complete a new payment (or the id may be missing for old purchases)."
+            "• No `telegram_payment_charge_id` in the database — apply the Supabase migration, then complete a new payment. "
+            "(If your last payment was one-time, `last_payment_is_recurring` should be false and charge id is optional for cancel.)"
         )
     if user_row.get("subscription_cancelled"):
         lines.append(
@@ -228,5 +255,9 @@ def subscription_debug_summary(user_row: Optional[Dict[str, Any]], now: Optional
     pe = _parse_dt(user_row.get("pro_expires_at"))
     lines.append(f"Paid Pro expires: {pe.isoformat() if pe else 'n/a'}")
     lines.append(f"Last Stars payment: {user_row.get('last_pro_payment_at') or 'n/a'}")
+    rec = user_row.get("last_payment_is_recurring")
+    lines.append(
+        f"Last payment recurring (Telegram): {rec if rec is not None else 'unknown (null — old row)'}"
+    )
     lines.append(f"Refund window (3d from payment): {'eligible' if within_refund_window(user_row, now) else 'not eligible'}")
     return "\n".join(lines)

@@ -35,8 +35,14 @@ from shared.subscription import (
     subscription_debug_summary,
     subscription_meta_for_user,
     explain_cannot_cancel_star_subscription,
+    MSG_CANCEL_ONETIME_EXPLANATION,
+    MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK,
+    should_skip_telegram_star_cancel,
 )
-from shared.telegram_star_api import format_telegram_cancel_subscription_error
+from shared.telegram_star_api import (
+    format_telegram_cancel_subscription_error,
+    is_telegram_charge_invalid_error,
+)
 from shared.time_utils import (
     get_user_now_from_timezone_name,
     combine_local_date_and_time,
@@ -140,9 +146,10 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
     tid = update.effective_user.id
     exp = sp.subscription_expiration_date
     ch = getattr(sp, "telegram_payment_charge_id", None)
+    is_recurring = bool(getattr(sp, "is_recurring", False))
     had_active_paid = paid_pro_period_active(get_user_by_telegram_id(tid))
     try:
-        apply_pro_subscription_from_payment(tid, exp, ch)
+        apply_pro_subscription_from_payment(tid, exp, ch, is_recurring=is_recurring)
     except Exception as e:
         logger.exception("on_successful_payment DB update failed: %s", e)
         await update.message.reply_text(
@@ -260,6 +267,21 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
         return
 
+    pe = meta.get("pro_expires_at") or "the end date in /status"
+
+    if should_skip_telegram_star_cancel(row):
+        m = mark_star_subscription_cancelled(tid)
+        body = MSG_CANCEL_ONETIME_EXPLANATION.format(pro_exp=pe)
+        if m is None:
+            await update.message.reply_text(
+                f"{body}\n\n"
+                "Note: the database could not store the “cancelled” flag. "
+                "Run Supabase migration `20260422120000_subscription_cancel_and_active.sql`."
+            )
+        else:
+            await update.message.reply_text(body)
+        return
+
     ch = row.get("telegram_payment_charge_id")
     if not ch:
         await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
@@ -273,10 +295,31 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
         )
     except tg_error.TelegramError as e:
         logger.warning("edit_user_star_subscription: %s", e)
+        if is_telegram_charge_invalid_error(e):
+            m = mark_star_subscription_cancelled(tid)
+            body = MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK.format(pro_exp=pe)
+            if m is None:
+                await update.message.reply_text(
+                    f"{body}\n\n"
+                    "The database could not store the “cancelled” flag — run migration 20260422120000."
+                )
+            else:
+                await update.message.reply_text(body)
+            return
         await update.message.reply_text(format_telegram_cancel_subscription_error(e))
         return
     except Exception as e:
         logger.exception("edit_user_star_subscription unexpected: %s", e)
+        if is_telegram_charge_invalid_error(e):
+            m = mark_star_subscription_cancelled(tid)
+            body = MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK.format(pro_exp=pe)
+            if m is None:
+                await update.message.reply_text(
+                    f"{body}\n\nThe database could not store the “cancelled” flag — run migration 20260422120000."
+                )
+            else:
+                await update.message.reply_text(body)
+            return
         await update.message.reply_text(
             f"Unexpected error talking to Telegram: {type(e).__name__}: {e!s}\n\n"
             f"{format_telegram_cancel_subscription_error(e)}"
@@ -284,7 +327,6 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
         return
 
     m = mark_star_subscription_cancelled(tid)
-    pe = meta.get("pro_expires_at", "the end date in /status")
     if m is None:
         await update.message.reply_text(
             "Telegram accepted the cancellation, but the database could not store the “cancelled” flag. "

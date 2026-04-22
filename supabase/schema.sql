@@ -22,6 +22,7 @@ CREATE TABLE users (
     telegram_subscription_id TEXT,
     subscription_cancelled BOOLEAN NOT NULL DEFAULT false,
     subscription_active BOOLEAN NOT NULL DEFAULT true,
+    last_payment_is_recurring BOOLEAN,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
