@@ -22,7 +22,22 @@ def _is_missing_telegram_charge_in_keys(upd: Dict[str, Any]) -> bool:
 
 def _is_missing_last_recurring_error(exc: BaseException) -> bool:
     t = str(exc).lower()
+    if "last_payment_is_recurring" in t and (
+        "pgrst204" in t
+        or "schema cache" in t
+        or ("column" in t and ("not find" in t or "unknown" in t or "missing" in t))
+    ):
+        return True
     return "pgrst204" in t and "last_payment_is_recurring" in t
+
+
+def _could_be_missing_last_recurring_column(exc: BaseException) -> bool:
+    t = str(exc).lower()
+    return (
+        "last_payment_is_recurring" in t
+        or "pgrst204" in t
+        or "schema cache" in t
+    )
 
 
 def _is_missing_subscription_flags_error(exc: BaseException) -> bool:
@@ -147,6 +162,18 @@ def apply_pro_subscription_from_payment(
         return _try_update(upd)
     except Exception as e:
         err = e
+        if "last_payment_is_recurring" in upd and _could_be_missing_last_recurring_column(
+            e
+        ):
+            logger.warning(
+                "Pro subscription update failed; retrying without last_payment_is_recurring: %s", e
+            )
+            try:
+                return _try_update(
+                    {k: v for k, v in upd.items() if k != "last_payment_is_recurring"}
+                )
+            except Exception as e2:
+                err = e2
 
     if _is_missing_subscription_flags_error(err):
         logger.warning(

@@ -146,7 +146,10 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
     tid = update.effective_user.id
     exp = sp.subscription_expiration_date
     ch = getattr(sp, "telegram_payment_charge_id", None)
-    is_recurring = bool(getattr(sp, "is_recurring", False))
+    # Do not default to False — that always writes `last_payment_is_recurring` and fails if the column
+    # is not deployed. Only set when Telegram sends the field (true/false for XTR / Stars).
+    raw_recur = getattr(sp, "is_recurring", None)
+    is_recurring = None if raw_recur is None else bool(raw_recur)
     had_active_paid = paid_pro_period_active(get_user_by_telegram_id(tid))
     try:
         apply_pro_subscription_from_payment(tid, exp, ch, is_recurring=is_recurring)
