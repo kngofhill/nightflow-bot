@@ -1623,6 +1623,21 @@
                         <div style="margin-top:6px;">SLEEP: ${escapeHtml(formatTime(sched?.sleep_start))} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
                     </div>
                 </div>
+                <div class="nf-card" style="margin:12px 0 0;">
+                    <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.45;">
+                        <strong>What updates Telegram</strong> — The bot always reads your <strong>current saved</strong> times
+                        and your notification toggles. Changing toggles only turns reminder <em>types</em> on or off, not
+                        the clock times (those follow what is stored above).
+                    </p>
+                    <p class="nf-muted" style="font-size:0.86rem;margin:0 0 12px;line-height:1.45;">
+                        Editing work &amp; sleep in <strong>EDIT</strong> updates <em>only</em> those four times; it
+                        <strong>does not</strong> re-generate coffee, meal, or light slots — that is intentional. Use
+                        the button below to run the Nightflow planner again on your <em>current</em> work &amp; sleep.
+                    </p>
+                    <button type="button" class="nf-cta" id="btn-rebuild-rec">↻ Rebuild recommended schedule</button>
+                    <p class="nf-muted" style="font-size:0.8rem;margin:8px 0 0;">Replaces coffee, meal, and light
+                        with a new recommendation. Uses the work &amp; sleep times shown in this screen.</p>
+                </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>☕ COFFEE TIMES</h3>
@@ -1683,6 +1698,46 @@
         document.getElementById('ed-co').onclick = () => openEditCoffee();
         document.getElementById('ed-me').onclick = () => openEditMeals();
         document.getElementById('ed-li').onclick = () => openEditLight();
+        const btnRe = document.getElementById('btn-rebuild-rec');
+        if (btnRe) {
+            btnRe.onclick = async () => {
+                if (
+                    !window.confirm(
+                        'Replace coffee, meal, and light with a new recommendation based on your current work and sleep?'
+                    )
+                ) {
+                    return;
+                }
+                renderLoading();
+                try {
+                    const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
+                        method: 'POST',
+                        json: workSleepPayloadForRebuild(state.schedule),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        tg.showAlert(
+                            (data && data.error) || 'Could not rebuild schedule. Check Pro and connection.'
+                        );
+                        state.screen = 'settings';
+                        state.stack = ['dashboard'];
+                        render();
+                        return;
+                    }
+                    await loadUserAndSchedule();
+                    state.screen = 'settings';
+                    state.stack = ['dashboard'];
+                    tg.showAlert('Recommended schedule updated — coffee, meal, and light times are refreshed.');
+                    render();
+                } catch (e) {
+                    console.error(e);
+                    tg.showAlert('Request failed');
+                    state.screen = 'settings';
+                    state.stack = ['dashboard'];
+                    render();
+                }
+            };
+        }
         const cancelSub = document.getElementById('btn-cancel-sub');
         if (cancelSub) {
             cancelSub.onclick = async () => {
@@ -1827,6 +1882,20 @@
         return bw.map((w) => w.time).join(' · ') || '—';
     }
 
+    /** Work/sleep JSON for POST /schedules/constant (full recommit with optimization). */
+    function workSleepPayloadForRebuild(sched) {
+        const pick = (t, fallback) => {
+            const s = formatTime(t);
+            return s && s !== '--:--' ? s : fallback;
+        };
+        return {
+            work_start: pick(sched?.work_start, '22:00'),
+            work_end: pick(sched?.work_end, '06:00'),
+            sleep_start: pick(sched?.sleep_start, '08:00'),
+            sleep_end: pick(sched?.sleep_end, '16:00'),
+        };
+    }
+
     function openEditWork() {
         const sched = state.schedule || {};
         const ws = formatTime(sched.work_start) || '22:00';
@@ -1845,7 +1914,8 @@
             <p class="nf-field-label">😴 SLEEP</p>
             <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'ms-s')}</div>
             <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'ms-e')}</div>
-            <p class="nf-sub">Coffee, meal, and light reminder times are not changed here.</p>
+            <p class="nf-sub">Only work &amp; sleep are updated here. Coffee, meal, and light are <strong>not</strong> recalculated — use
+                <strong>Settings → Rebuild recommended schedule</strong> to refresh those from your current work &amp; sleep.</p>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="m-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="m-can">CANCEL</button>

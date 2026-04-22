@@ -1,5 +1,6 @@
 import os
 import logging
+import datetime as dt
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import json
@@ -53,10 +54,15 @@ from shared.telegram_star_api import (
 )
 from shared.time_utils import (
     get_user_now_from_timezone_name,
-    combine_local_date_and_time,
     DEFAULT_TIMEZONE
 )
-from shared.schedule_utils import safe_json_parse
+from shared.telegram_notify_schedule import (
+    format_hhmm,
+    parse_notification_prefs,
+    fetch_today_sent_dedup_keys,
+    fetch_effective_schedule_today,
+    sleep_window_reminder_hhmm,
+)
 
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -382,14 +388,28 @@ async def on_refunded_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def _dedup_key(db_type: str, kind: str, slot: str, local_s: str):
+    return (str(db_type), str(kind or db_type), str(slot), str(local_s))
+
+
+def _seconds_until_next_minute() -> float:
+    n = dt.datetime.now()
+    return max(0.5, 60.0 - n.second - n.microsecond / 1_000_000.0)
+
+
 async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
-    """Background job for notifications."""
-    # Your existing notification code - unchanged
+    """
+    Send schedule reminders in the user's local timezone.
+    Uses a 60s tick aligned near the start of each minute so HH:MM slot times actually match.
+    """
     try:
         users_result = (
-            supabase_client.table('users')
-            .select('id, telegram_id, timezone, notification_enabled, trial_started_at, pro_expires_at')
-            .eq('notification_enabled', True)
+            supabase_client.table("users")
+            .select(
+                "id, telegram_id, timezone, notification_enabled, "
+                "trial_started_at, pro_expires_at, notification_prefs"
+            )
+            .eq("notification_enabled", True)
             .execute()
         )
         if not users_result.data:
@@ -398,58 +418,104 @@ async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
         for user in users_result.data:
             if not has_pro_entitlement(user):
                 continue
-            user_id = user['id']
-            timezone_name = user.get('timezone') or DEFAULT_TIMEZONE
+            user_id = user["id"]
+            timezone_name = user.get("timezone") or DEFAULT_TIMEZONE
             now_local = get_user_now_from_timezone_name(timezone_name)
             today_local = now_local.date()
-            current_hour_min = now_local.strftime("%H:%M")
-
-            # Check if today is a day off
-            daily = supabase_client.table('daily_schedules').select('shift_type').eq('user_id', user_id).eq('date', str(today_local)).execute()
-            if daily.data and daily.data[0].get('shift_type') == 'off':
+            current_hhmm = now_local.strftime("%H:%M")
+            today_s = str(today_local)
+            sent_keys = fetch_today_sent_dedup_keys(user_id, today_local)
+            prefs = parse_notification_prefs(user)
+            st, sched = fetch_effective_schedule_today(user_id, today_s)
+            if st == "no_constant" or st == "off" or not sched:
                 continue
 
-            # Get active constant schedule
-            const = supabase_client.table('constant_schedules').select('*').eq('user_id', user_id).eq('active', True).execute()
-            if not const.data:
-                continue
-            schedule = const.data[0]
+            async def fire(db_type, kind, slot, text):
+                k = _dedup_key(db_type, kind, slot, today_s)
+                if k in sent_keys:
+                    return
+                try:
+                    await send_notification(
+                        context,
+                        user_id,
+                        text,
+                        db_type,
+                        {
+                            "slot": slot,
+                            "local_date": today_s,
+                            "kind": kind,
+                        },
+                    )
+                    sent_keys.add(k)
+                except Exception as ex:
+                    logger.error("notify fire failed: %s", ex)
 
-            coffee = safe_json_parse(schedule.get('coffee_windows'))
-            meal = safe_json_parse(schedule.get('meal_windows'))
-            bright = safe_json_parse(schedule.get('brightness_windows'))
+            if prefs.get("notifWork", True):
+                wh = format_hhmm(sched.get("work_start"))
+                if wh and wh == current_hhmm:
+                    stype = (sched.get("shift_type") or "shift").upper()
+                    await fire(
+                        "custom",
+                        "work_start",
+                        current_hhmm,
+                        f"🌙 Work starts at {wh} — time to start, {stype}.",
+                    )
+                wend = format_hhmm(sched.get("work_end"))
+                if wend and wend == current_hhmm:
+                    stype = (sched.get("shift_type") or "shift").upper()
+                    await fire(
+                        "custom",
+                        "work_end",
+                        current_hhmm,
+                        f"🏁 Shift ends at {wend}. Wind down and prepare for recovery ({stype}).",
+                    )
 
-            for w in coffee or []:
-                if w.get('time') == current_hour_min:
-                    await send_notification_once(context, user_id, 'coffee', current_hour_min, today_local, w.get('message', '☕ Time for coffee!'))
+            if prefs.get("notifSummary", True) and current_hhmm:
+                wend = format_hhmm(sched.get("work_end"))
+                if wend and wend == current_hhmm:
+                    await fire(
+                        "custom",
+                        "end_shift_checkin",
+                        current_hhmm,
+                        "📝 End of shift — open the Nightflow mini app to log your check-in and energy.",
+                    )
 
-            for w in meal or []:
-                if w.get('time') == current_hour_min:
-                    await send_notification_once(context, user_id, 'meal', current_hour_min, today_local, w.get('message', '🍽️ Time to eat!'))
+            if prefs.get("notifCoffee", True):
+                for w in sched.get("coffee_windows") or []:
+                    t = format_hhmm(w.get("time"))
+                    if t and t == current_hhmm:
+                        await fire("coffee", "coffee", current_hhmm, w.get("message", "☕ Time for coffee!"))
 
-            for w in bright or []:
-                if w.get('time') == current_hour_min:
-                    await send_notification_once(context, user_id, 'brightness', current_hour_min, today_local, w.get('message', '💡 Light reminder!'))
+            if prefs.get("notifMeal", True):
+                for w in sched.get("meal_windows") or []:
+                    t = format_hhmm(w.get("time"))
+                    if t and t == current_hhmm:
+                        await fire("meal", "meal", current_hhmm, w.get("message", "🍽️ Time to eat!"))
 
-            sleep_start = schedule.get('sleep_start')
-            if sleep_start:
-                sleep_dt = combine_local_date_and_time(today_local, sleep_start, timezone_name)
-                if sleep_dt and sleep_dt <= now_local:
-                    sleep_dt += timedelta(days=1)
-                if sleep_dt and (sleep_dt - timedelta(minutes=30)).strftime("%H:%M") == current_hour_min:
-                    await send_notification_once(context, user_id, 'sleep', current_hour_min, today_local, f"😴 30 minutes until sleep time ({sleep_start}). Wind down.")
+            if prefs.get("notifLight", True):
+                for w in sched.get("brightness_windows") or []:
+                    t = format_hhmm(w.get("time"))
+                    if t and t == current_hhmm:
+                        await fire(
+                            "brightness",
+                            "brightness",
+                            current_hhmm,
+                            w.get("message", "💡 Light reminder!"),
+                        )
+
+            if prefs.get("notifSleep", True) and sched.get("sleep_start"):
+                ss = sched.get("sleep_start")
+                r_at = sleep_window_reminder_hhmm(str(ss), today_local, timezone_name)
+                if r_at and r_at == current_hhmm:
+                    ssn = format_hhmm(ss) or str(ss)[:5]
+                    await fire(
+                        "sleep",
+                        "sleep_30",
+                        current_hhmm,
+                        f"😴 30 minutes until sleep ({ssn}). Start winding down.",
+                    )
     except Exception as e:
-        logger.error(f"Error in notifications: {e}")
-
-async def send_notification_once(context, user_id, ntype, hhmm, local_date, message):
-    """Helper to avoid duplicate notifications."""
-    try:
-        already = supabase_client.table("notifications").select("id").eq("user_id", user_id).eq("type", ntype).eq("sent", True).contains("metadata", {"slot": hhmm, "local_date": str(local_date)}).execute()
-        if already.data:
-            return
-        await send_notification(context, user_id, message, ntype, {"slot": hhmm, "local_date": str(local_date)})
-    except Exception as e:
-        logger.error(f"Error in send_notification_once: {e}")
+        logger.error("Error in notifications: %s", e, exc_info=True)
 
 async def send_notification(context, user_id, message, ntype, metadata=None):
     """Send a Telegram message and log it."""
@@ -525,10 +591,14 @@ def main():
     application.add_handler(MessageHandler(RefundedPaymentFilter(), on_refunded_payment))
     application.add_error_handler(log_errors)
 
-    # Schedule notifications
+    # Schedule notifications (1-minute cadence, first tick near top of a clock minute for HH:MM matching)
     if application.job_queue:
-        application.job_queue.run_repeating(check_scheduled_notifications, interval=300, first=10)
-        logger.info("✅ Notification scheduler started")
+        application.job_queue.run_repeating(
+            check_scheduled_notifications,
+            interval=60,
+            first=_seconds_until_next_minute(),
+        )
+        logger.info("✅ Notification scheduler started (60s interval, aligned to minute)")
 
     logger.info("🚀 Nightflow bot starting with POLLING...")
     
