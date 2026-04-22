@@ -8,12 +8,15 @@ from flask import Blueprint, jsonify
 
 from config import TELEGRAM_TOKEN
 from api.request_util import get_user_from_request
+from shared.db import supabase_client, mark_star_subscription_cancelled
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
     PRO_PRICE_STARS,
     SUBSCRIPTION_PERIOD_SECONDS,
+    subscription_meta_for_user,
 )
 from shared.telegram_invoice import create_invoice_link
+from shared.telegram_star_api import edit_user_star_subscription as call_edit_user_star_subscription
 
 bp = Blueprint("subscription", __name__, url_prefix="/api/v1")
 
@@ -28,7 +31,7 @@ def create_stars_invoice_link():
     if not TELEGRAM_TOKEN:
         return jsonify({"error": "Billing is not configured"}), 503
 
-    prices = [{"label": "Nightflow Pro (30 days)", "amount": PRO_PRICE_STARS}]
+    prices = [{"label": "1 month", "amount": PRO_PRICE_STARS}]
     url = create_invoice_link(
         TELEGRAM_TOKEN,
         title="Nightflow Pro",
@@ -45,3 +48,59 @@ def create_stars_invoice_link():
     if not url:
         return jsonify({"error": "Could not create invoice link"}), 502
     return jsonify({"url": url})
+
+
+@bp.route("/cancel-subscription", methods=["POST"])
+def cancel_star_subscription():
+    """
+    Stops future Telegram Stars renewals. Pro stays until pro_expires_at.
+    """
+    from api.routes.users import _public_user_row
+
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+
+    if not TELEGRAM_TOKEN:
+        return jsonify({"error": "Billing is not configured"}), 503
+
+    urow = supabase_client.table("users").select("*").eq("id", user_id).execute()
+    if not urow.data:
+        return jsonify({"error": "User not found"}), 404
+    row = urow.data[0]
+    telegram_id = int(row["telegram_id"])
+    meta = subscription_meta_for_user(row)
+    if not meta.get("can_cancel_star_subscription"):
+        return jsonify(
+            {"error": "Cannot cancel: no active paid subscription, or already cancelled", "code": "cancel_forbidden"},
+        ), 403
+
+    ch = row.get("telegram_payment_charge_id")
+    if not ch:
+        return jsonify({"error": "No payment id on file"}), 400
+
+    ok, raw = call_edit_user_star_subscription(
+        TELEGRAM_TOKEN, user_id=telegram_id, telegram_payment_charge_id=str(ch), is_canceled=True
+    )
+    if not ok:
+        desc = (raw or {}).get("description", str(raw)) if isinstance(raw, dict) else str(raw)
+        return jsonify({"error": "Telegram API error", "details": desc}), 502
+
+    m = mark_star_subscription_cancelled(telegram_id)
+    pro_exp = meta.get("pro_expires_at", "")
+    msg = (
+        f"Your subscription will not auto-renew. You keep Pro access until {pro_exp}."
+    )
+    if m is None:
+        return jsonify(
+            {
+                "ok": True,
+                "warning": "Database missing subscription flags; run migration 20260422120000",
+                "message": msg,
+                "pro_expires_at": pro_exp,
+            }
+        )
+
+    refreshed = supabase_client.table("users").select("*").eq("id", user_id).execute()
+    u = refreshed.data[0] if refreshed.data else row
+    return jsonify({"ok": True, "message": msg, "user": _public_user_row(u)})

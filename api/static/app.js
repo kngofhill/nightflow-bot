@@ -702,7 +702,7 @@
         } else {
             const isFree = !hasProEntitlement();
             // TESTING ONLY — revert ?? fallback to 50 before production
-            const stars = state.userRow?.pro_price_stars ?? 1;
+            const stars = state.userRow?.pro_price_stars ?? 50;
             if (isFree) {
                 body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
                     <div class="nf-upgrade-hero-title">Nightflow Pro</div>
@@ -1041,6 +1041,20 @@
         return list.map((z) => `<option value="${escapeHtml(z)}"${z === s ? ' selected' : ''}>${escapeHtml(z)}</option>`).join('');
     }
 
+    function formatProExpiryDate(iso) {
+        if (!iso) return '';
+        try {
+            return new Date(iso).toLocaleDateString(undefined, {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+            });
+        } catch (e) {
+            return String(iso);
+        }
+    }
+
     function leadDaysOptionsHtml(val) {
         const v = String(val || '3');
         return [1, 2, 3]
@@ -1096,6 +1110,20 @@
         const sched = state.schedule;
         const s = state.settings;
         const tz = state.userRow?.timezone || 'Asia/Tashkent';
+        const canCancel = state.userRow?.can_cancel_star_subscription === true;
+        const subCancelled = state.userRow?.subscription_cancelled === true;
+        const proExp = state.userRow?.pro_expires_at;
+        const billingBlock = canCancel
+            ? `<div class="nf-card nf-billing-box">
+                    <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 Pro billing</h3>
+                    <p class="nf-muted" style="margin:0 0 12px;font-size:0.86rem;">Recurring in Telegram. Cancel to stop future Star charges. You keep Pro until your current period ends.</p>
+                    <button type="button" class="nf-cta-secondary nf-btn-cancel-sub" id="btn-cancel-sub">Cancel Subscription</button>
+                </div>`
+            : subCancelled && proExp
+            ? `<p class="nf-billing-notice">Your subscription will not renew. You keep Pro access until <strong>${escapeHtml(
+                  formatProExpiryDate(proExp)
+              )}</strong>.</p>`
+            : '';
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
@@ -1159,6 +1187,7 @@
                         </select>
                     </div>
                 </div>
+                ${billingBlock}
                 <div class="nf-row-btns">
                     <button type="button" class="nf-cta" id="save-all">SAVE ALL</button>
                     <button type="button" class="nf-cta nf-cta-secondary" id="reset-def">RESET</button>
@@ -1170,6 +1199,41 @@
         document.getElementById('ed-co').onclick = () => openEditCoffee();
         document.getElementById('ed-me').onclick = () => openEditMeals();
         document.getElementById('ed-li').onclick = () => openEditLight();
+        const cancelSub = document.getElementById('btn-cancel-sub');
+        if (cancelSub) {
+            cancelSub.onclick = async () => {
+                if (
+                    !window.confirm(
+                        'Stop automatic renewals? You keep Pro access until the end of your current period.'
+                    )
+                ) {
+                    return;
+                }
+                try {
+                    const res = await api(`/cancel-subscription?telegram_id=${user.id}`, {
+                        method: 'POST',
+                        json: {},
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        tg.showAlert(data.error || 'Could not cancel subscription');
+                        return;
+                    }
+                    if (data.user) {
+                        state.userRow = { ...state.userRow, ...data.user };
+                        applyUserSettingsFromUserRow(state.userRow);
+                    } else {
+                        const ur = await api(`/users/me?telegram_id=${user.id}`);
+                        if (ur.ok) state.userRow = await ur.json();
+                    }
+                    tg.showAlert(data.message || 'Your subscription will not renew.');
+                    render();
+                } catch (e) {
+                    console.error(e);
+                    tg.showAlert('Request failed');
+                }
+            };
+        }
         document.getElementById('save-all').onclick = async () => {
             const tzSel = document.getElementById('tz-select');
             const leadSel = document.getElementById('lead-days');

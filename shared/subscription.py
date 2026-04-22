@@ -5,19 +5,41 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-# --- # TESTING ONLY — revert entire block before production ---
-PRO_PRICE_STARS = 1
-# Short trial for immediate entitlement checks (no calendar-day grace).
+# --- # TESTING ONLY — short trial; production price 50 Stars / month
+PRO_PRICE_STARS = 50
 TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(minutes=5)
-# --- end TESTING ONLY ---
-
-# Production defaults (restore when reverting TESTING block):
-# PRO_PRICE_STARS = 50
-# TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
+# --- end TESTING ONLY (trial) ---
+# For a normal 14-day trial instead: TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
 
 REFUND_WINDOW_DAYS = 3
-SUBSCRIPTION_PERIOD_SECONDS = 2592000  # Telegram Stars recurring: 30 days
+SUBSCRIPTION_PERIOD_SECONDS = 2592000  # 30 days — Telegram Stars recurring
+PRO_SUBSCRIPTION_DAYS = 30
 INVOICE_PAYLOAD_NIGHTFLOW_PRO = "nightflow_pro_v1"
+
+
+def compute_pro_expires_after_payment(
+    user_row: Optional[Dict[str, Any]],
+    now: datetime,
+    subscription_expiration_unix: Optional[int] = None,
+) -> datetime:
+    """After a successful Stars payment, extend Pro by 30 days from current paid expiry or from now.
+
+    If Telegram sends ``subscription_expiration_date``, the later of (computed, Telegram) is used
+    so renewals are never shorter than the invoice period.
+    """
+    now = now.astimezone(timezone.utc)
+    current = _parse_dt((user_row or {}).get("pro_expires_at")) if user_row else None
+    if current and current > now:
+        new_exp = current + timedelta(days=PRO_SUBSCRIPTION_DAYS)
+    else:
+        new_exp = now + timedelta(days=PRO_SUBSCRIPTION_DAYS)
+    if subscription_expiration_unix is not None:
+        from_telegram = datetime.fromtimestamp(
+            int(subscription_expiration_unix), tz=timezone.utc
+        )
+        if from_telegram > new_exp:
+            new_exp = from_telegram
+    return new_exp
 
 
 def trial_period_end(trial_started: datetime) -> datetime:
@@ -99,15 +121,35 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
         trial_ends_at = trial_period_end(trial_started).isoformat()
 
     pro_expires_at = None
+    pro_expires_dt = None
     if user_row and user_row.get("pro_expires_at"):
-        pe = _parse_dt(user_row.get("pro_expires_at"))
-        if pe:
-            pro_expires_at = pe.isoformat()
+        pro_expires_dt = _parse_dt(user_row.get("pro_expires_at"))
+        if pro_expires_dt:
+            pro_expires_at = pro_expires_dt.isoformat()
 
     refund_deadline = None
     last_pay = _parse_dt(user_row.get("last_pro_payment_at")) if user_row else None
     if last_pay:
         refund_deadline = (last_pay + timedelta(days=REFUND_WINDOW_DAYS)).isoformat()
+
+    sub_cancel = bool((user_row or {}).get("subscription_cancelled")) if user_row else False
+    sub_active = (user_row or {}).get("subscription_active")
+    if sub_active is None:
+        sub_active = True
+    else:
+        sub_active = bool(sub_active)
+
+    last_pay_exists = bool(last_pay)
+    ch_id = (user_row or {}).get("telegram_payment_charge_id") if user_row else None
+    can_cancel = (
+        has_pro
+        and last_pay_exists
+        and bool(ch_id)
+        and not sub_cancel
+        and sub_active
+        and pro_expires_dt is not None
+        and now < pro_expires_dt
+    )
 
     return {
         "has_pro_entitlement": has_pro,
@@ -117,6 +159,9 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
         "pro_price_stars": PRO_PRICE_STARS,
         # TESTING ONLY: short trial; use trial_ends_at for truth (not this day count).
         "trial_days": int(TRIAL_ENTITLEMENT_TIMEDELTA.total_seconds() // 86400),
+        "subscription_cancelled": sub_cancel,
+        "subscription_active": sub_active,
+        "can_cancel_star_subscription": can_cancel,
     }
 
 

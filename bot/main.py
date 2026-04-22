@@ -93,7 +93,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send Telegram Stars invoice for Nightflow Pro (XTR). Tries recurring; falls back to one-time if API rejects."""
     # TESTING ONLY: price is PRO_PRICE_STARS (1 Star); production was 50.
     chat_id = update.effective_chat.id
-    prices = [LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)]
+    prices = [LabeledPrice("1 month", PRO_PRICE_STARS)]
     desc = (
         "Full schedule, weekly report, suggestions, settings editing, "
         f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars per 30 days (recurring)."
@@ -106,15 +106,16 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency="XTR",
         prices=prices,
     )
-    # XTR: omit provider_token (empty string can trigger Bad Request). Recurring may be unsupported until BotFather payments are fully configured — then we fall back to one-time.
+    # XTR: do not pass provider_token (or use None). Recurring: subscription_period = 30 days in seconds.
     try:
         await context.bot.send_invoice(
             **common,
+            provider_token=None,
             api_kwargs={"subscription_period": SUBSCRIPTION_PERIOD_SECONDS},
         )
     except tg_error.BadRequest as e:
         logger.warning("Recurring Stars invoice rejected (%s); sending one-time invoice.", e)
-        await context.bot.send_invoice(**common)
+        await context.bot.send_invoice(**common, provider_token=None)
 
 
 async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,59 +135,104 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
     tid = update.effective_user.id
     exp = sp.subscription_expiration_date
     ch = getattr(sp, "telegram_payment_charge_id", None)
-    apply_pro_subscription_from_payment(tid, exp, ch)
-    await update.message.reply_text("Nightflow Pro is now active. Open the mini-app to use every feature.")
+    had_active_paid = paid_pro_period_active(get_user_by_telegram_id(tid))
+    try:
+        apply_pro_subscription_from_payment(tid, exp, ch)
+    except Exception as e:
+        logger.exception("on_successful_payment DB update failed: %s", e)
+        await update.message.reply_text(
+            "Payment received, but saving your subscription in the database failed. "
+            "Ask an admin to run the latest Supabase migration, then use /status or pay again."
+        )
+        return
+    if had_active_paid:
+        await update.message.reply_text(
+            "Nightflow Pro was extended by 30 days. Your next renewal is handled in Telegram (Stars subscription)."
+        )
+    else:
+        await update.message.reply_text(
+            "Nightflow Pro is now active. Open the mini-app to use every feature."
+        )
 
 
 async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Refunds Stars via ``refundStarPayment``, then clears Pro in DB. Same 3-day window as Telegram policy."""
     tid = update.effective_user.id
-    row = get_user_by_telegram_id(tid)
-    if not paid_pro_period_active(row):
-        await update.message.reply_text(
-            "No active paid Nightflow Pro subscription to refund. "
-            "(Trial-only users are not charged; there is nothing to refund.)"
-        )
-        return
-    if not within_refund_window(row):
-        await update.message.reply_text(
-            "Refunds are only allowed within the first 3 days after purchase."
-        )
-        return
-
-    charge_id = (row or {}).get("telegram_payment_charge_id")
-    if not charge_id:
-        # Local fallback: cannot call Telegram without the charge id from successful_payment
-        logger.warning("refund: no telegram_payment_charge_id for user %s", tid)
-        revoke_pro_subscription(tid)
-        await update.message.reply_text(
-            "Pro access was removed, but this account had no stored payment id, "
-            "so Stars could not be returned through the bot. Re-subscribe after a new purchase stores the id."
-        )
-        return
-
     try:
-        await context.bot.refund_star_payment(
-            user_id=tid, telegram_payment_charge_id=str(charge_id)
-        )
-    except tg_error.TelegramError as e:
-        err_s = str(e)
-        low = err_s.lower()
-        logger.warning("refund_star_payment failed: %s", e)
-        # If Telegram already processed this refund, keep DB in sync.
-        if "already" in low or "repeated" in low or "was refunded" in low:
-            revoke_pro_subscription(tid)
+        row = get_user_by_telegram_id(tid)
+        if not paid_pro_period_active(row):
             await update.message.reply_text(
-                "This payment was already refunded in Telegram. Pro access is cleared to match your account."
+                "No active paid Nightflow Pro subscription to refund. "
+                "(Trial-only users are not charged; there is nothing to refund.)"
             )
             return
-        await update.message.reply_text(
-            f"Could not refund Stars. Pro access is unchanged. Try again or use Telegram’s payment history. Details:\n{err_s[:500]}"
-        )
-        return
+        if not within_refund_window(row):
+            await update.message.reply_text(
+                "Refunds are only allowed within the first 3 days after purchase."
+            )
+            return
 
-    revoke_pro_subscription(tid)
-    await update.message.reply_text("Stars refunded and Pro access removed.")
+        charge_id = (row or {}).get("telegram_payment_charge_id")
+        if not charge_id:
+            # No charge id (e.g. paid before we stored it, or DB column missing and save skipped)
+            logger.warning("refund: no telegram_payment_charge_id for user %s", tid)
+            try:
+                revoke_pro_subscription(tid)
+            except Exception as e:
+                logger.exception("revoke_pro_subscription: %s", e)
+                await update.message.reply_text(
+                    "Could not update the database. Run the Supabase migration that adds "
+                    "users.telegram_payment_charge_id, then try /refund again."
+                )
+                return
+            await update.message.reply_text(
+                "Pro access was removed. There was no payment id on file, so the bot could not "
+                "call Telegram to return Stars. After the DB migration, new payments will store the id for refunds."
+            )
+            return
+
+        try:
+            await context.bot.refund_star_payment(
+                user_id=tid, telegram_payment_charge_id=str(charge_id)
+            )
+        except tg_error.TelegramError as e:
+            err_s = str(e)
+            low = err_s.lower()
+            logger.warning("refund_star_payment failed: %s", e)
+            if "already" in low or "repeated" in low or "was refunded" in low:
+                try:
+                    revoke_pro_subscription(tid)
+                except Exception as db_e:
+                    logger.exception("revoke after Telegram already-refunded: %s", db_e)
+                    await update.message.reply_text(
+                        f"Telegram says this was already refunded, but the database update failed: {str(db_e)[:200]}"
+                    )
+                    return
+                await update.message.reply_text(
+                    "This payment was already refunded in Telegram. Pro access is cleared to match your account."
+                )
+                return
+            await update.message.reply_text(
+                f"Could not refund Stars. Pro access is unchanged. Try again or use Telegram’s payment history. Details:\n{err_s[:500]}"
+            )
+            return
+
+        try:
+            revoke_pro_subscription(tid)
+        except Exception as e:
+            logger.exception("revoke after successful refund_star_payment: %s", e)
+            await update.message.reply_text(
+                "Stars were refunded in Telegram, but clearing Pro in the database failed. "
+                "Run the Supabase migration, then an admin can fix the row or you can try /refund again."
+            )
+            return
+        await update.message.reply_text("Stars refunded and Pro access removed.")
+    except Exception as e:
+        logger.exception("cmd_refund: %s", e)
+        await update.message.reply_text(
+            "Something went wrong processing /refund. Check server logs. "
+            "If the database is missing the latest migration, apply it in Supabase and redeploy."
+        )
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):

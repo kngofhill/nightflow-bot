@@ -7,6 +7,26 @@ import supabase
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+
+def _is_missing_telegram_charge_column_error(exc: BaseException) -> bool:
+    """PostgREST PGRST204 or similar when `telegram_payment_charge_id` is not in the DB yet."""
+    text = str(exc).lower()
+    return "pgrst204" in text or (
+        "telegram_payment_charge_id" in text and "column" in text and "find" in text
+    )
+
+
+def _is_missing_telegram_charge_in_keys(upd: Dict[str, Any]) -> bool:
+    return "telegram_payment_charge_id" in upd
+
+
+def _is_missing_subscription_flags_error(exc: BaseException) -> bool:
+    t = str(exc).lower()
+    return "pgrst204" in t and (
+        "subscription_cancelled" in t or "subscription_active" in t or "telegram_subscription_id" in t
+    )
+
+
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 
@@ -91,36 +111,107 @@ def apply_pro_subscription_from_payment(
     subscription_expiration_unix: Optional[int] = None,
     telegram_payment_charge_id: Optional[str] = None,
 ):
-    """Extend Pro access from a successful Telegram Stars subscription payment."""
-    from datetime import datetime, timedelta, timezone
+    """Extend Pro access from a successful Telegram Stars payment (recurring or one-time)."""
+    from datetime import datetime, timezone
+
+    from shared.subscription import compute_pro_expires_after_payment
 
     now = datetime.now(timezone.utc)
-    upd: Dict[str, Any] = {"last_pro_payment_at": now.isoformat()}
-    if subscription_expiration_unix is not None:
-        upd["pro_expires_at"] = datetime.fromtimestamp(
-            int(subscription_expiration_unix), tz=timezone.utc
-        ).isoformat()
-    else:
-        upd["pro_expires_at"] = (now + timedelta(days=30)).isoformat()
+    row = get_user_by_telegram_id(telegram_id) or {}
+    new_exp = compute_pro_expires_after_payment(row, now, subscription_expiration_unix)
+
+    upd: Dict[str, Any] = {
+        "last_pro_payment_at": now.isoformat(),
+        "pro_expires_at": new_exp.isoformat(),
+        "subscription_active": True,
+        "subscription_cancelled": False,
+    }
     if telegram_payment_charge_id:
-        upd["telegram_payment_charge_id"] = str(telegram_payment_charge_id)
-    return supabase_client.table("users").update(upd).eq("telegram_id", int(telegram_id)).execute()
+        ch = str(telegram_payment_charge_id)
+        upd["telegram_payment_charge_id"] = ch
+        upd["telegram_subscription_id"] = ch
+
+    def _try_update(payload: Dict[str, Any]):
+        return supabase_client.table("users").update(payload).eq("telegram_id", int(telegram_id)).execute()
+
+    err: Optional[BaseException] = None
+    try:
+        return _try_update(upd)
+    except Exception as e:
+        err = e
+
+    if _is_missing_subscription_flags_error(err):
+        logger.warning(
+            "subscription columns missing; apply migration 20260422120000. Saving without them."
+        )
+        upd = {
+            k: v
+            for k, v in upd.items()
+            if k
+            not in (
+                "subscription_active",
+                "subscription_cancelled",
+                "telegram_subscription_id",
+            )
+        }
+        try:
+            return _try_update(upd)
+        except Exception as e:
+            err = e
+
+    if _is_missing_telegram_charge_column_error(err):
+        logger.warning("telegram_payment_charge_id column missing; apply migration 20260421180000.")
+        upd2 = {k: v for k, v in upd.items() if k not in ("telegram_payment_charge_id", "telegram_subscription_id")}
+        return _try_update(upd2)
+
+    raise err
 
 
 def revoke_pro_subscription(telegram_id: int):
     """Immediately revoke paid Pro (e.g. Stars refund)."""
-    return (
-        supabase_client.table("users")
-        .update(
-            {
-                "pro_expires_at": None,
-                "last_pro_payment_at": None,
-                "telegram_payment_charge_id": None,
+    full = {
+        "pro_expires_at": None,
+        "last_pro_payment_at": None,
+        "telegram_payment_charge_id": None,
+        "telegram_subscription_id": None,
+        "subscription_cancelled": False,
+        "subscription_active": False,
+    }
+    try:
+        return supabase_client.table("users").update(full).eq("telegram_id", int(telegram_id)).execute()
+    except Exception as e:
+        if _is_missing_telegram_charge_column_error(e):
+            logger.warning(
+                "users.telegram_payment_charge_id column missing; revoking with Pro fields only. "
+                "Apply migration 20260421180000_telegram_payment_charge_id.sql in Supabase."
+            )
+            subset = {k: v for k, v in full.items() if k != "telegram_payment_charge_id"}
+            return supabase_client.table("users").update(subset).eq("telegram_id", int(telegram_id)).execute()
+        if _is_missing_subscription_flags_error(e):
+            subset = {
+                k: v
+                for k, v in full.items()
+                if k
+                not in (
+                    "subscription_cancelled",
+                    "subscription_active",
+                    "telegram_subscription_id",
+                )
             }
-        )
-        .eq("telegram_id", int(telegram_id))
-        .execute()
-    )
+            return supabase_client.table("users").update(subset).eq("telegram_id", int(telegram_id)).execute()
+        raise
+
+
+def mark_star_subscription_cancelled(telegram_id: int):
+    """User cancelled auto-renewal; Pro remains until pro_expires_at."""
+    upd = {"subscription_cancelled": True, "subscription_active": False}
+    try:
+        return supabase_client.table("users").update(upd).eq("telegram_id", int(telegram_id)).execute()
+    except Exception as e:
+        if _is_missing_subscription_flags_error(e):
+            logger.warning("subscription_cancelled / subscription_active columns missing; run migration 20260422120000")
+            return None
+        raise
 
 def update_last_active(telegram_id: int, timestamp_iso: str):
     return (

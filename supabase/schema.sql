@@ -19,6 +19,9 @@ CREATE TABLE users (
     pro_expires_at TIMESTAMP WITH TIME ZONE,
     last_pro_payment_at TIMESTAMP WITH TIME ZONE,
     telegram_payment_charge_id TEXT,
+    telegram_subscription_id TEXT,
+    subscription_cancelled BOOLEAN NOT NULL DEFAULT false,
+    subscription_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
