@@ -702,7 +702,7 @@
         } else {
             const isFree = !hasProEntitlement();
             // TESTING ONLY — revert ?? fallback to 50 before production
-            const stars = state.userRow?.pro_price_stars ?? 50;
+            const stars = state.userRow?.pro_price_stars ?? 1;
             if (isFree) {
                 body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
                     <div class="nf-upgrade-hero-title">Nightflow Pro</div>
@@ -1216,7 +1216,12 @@
                     });
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) {
-                        tg.showAlert(data.error || 'Could not cancel subscription');
+                        const parts = [
+                            data.error,
+                            data.explanation,
+                            data.details,
+                        ].filter(Boolean);
+                        tg.showAlert(parts.length ? parts.join('\n\n') : 'Could not cancel subscription');
                         return;
                     }
                     if (data.user) {

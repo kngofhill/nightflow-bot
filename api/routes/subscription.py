@@ -13,10 +13,14 @@ from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
     PRO_PRICE_STARS,
     SUBSCRIPTION_PERIOD_SECONDS,
+    explain_cannot_cancel_star_subscription,
     subscription_meta_for_user,
 )
 from shared.telegram_invoice import create_invoice_link
-from shared.telegram_star_api import edit_user_star_subscription as call_edit_user_star_subscription
+from shared.telegram_star_api import (
+    edit_user_star_subscription as call_edit_user_star_subscription,
+    format_telegram_cancel_subscription_error,
+)
 
 bp = Blueprint("subscription", __name__, url_prefix="/api/v1")
 
@@ -72,19 +76,35 @@ def cancel_star_subscription():
     meta = subscription_meta_for_user(row)
     if not meta.get("can_cancel_star_subscription"):
         return jsonify(
-            {"error": "Cannot cancel: no active paid subscription, or already cancelled", "code": "cancel_forbidden"},
+            {
+                "error": "Cannot cancel subscription from the app right now",
+                "code": "cancel_forbidden",
+                "explanation": explain_cannot_cancel_star_subscription(row, meta),
+            }
         ), 403
 
     ch = row.get("telegram_payment_charge_id")
     if not ch:
-        return jsonify({"error": "No payment id on file"}), 400
+        return jsonify(
+            {
+                "error": "No payment id on file",
+                "explanation": explain_cannot_cancel_star_subscription(row, meta),
+            }
+        ), 400
 
     ok, raw = call_edit_user_star_subscription(
         TELEGRAM_TOKEN, user_id=telegram_id, telegram_payment_charge_id=str(ch), is_canceled=True
     )
     if not ok:
         desc = (raw or {}).get("description", str(raw)) if isinstance(raw, dict) else str(raw)
-        return jsonify({"error": "Telegram API error", "details": desc}), 502
+        return jsonify(
+            {
+                "error": "Telegram did not accept cancellation",
+                "code": "telegram_rejected",
+                "details": desc,
+                "explanation": format_telegram_cancel_subscription_error(str(desc)),
+            }
+        ), 502
 
     m = mark_star_subscription_cancelled(telegram_id)
     pro_exp = meta.get("pro_expires_at", "")

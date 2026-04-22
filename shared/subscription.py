@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-# --- # TESTING ONLY — short trial; production price 50 Stars / month
-PRO_PRICE_STARS = 50
+# --- # TESTING ONLY — 1 Star price + short trial; production: set PRO_PRICE_STARS = 50
+PRO_PRICE_STARS = 1
 TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(minutes=5)
-# --- end TESTING ONLY (trial) ---
+# --- end TESTING ONLY ---
 # For a normal 14-day trial instead: TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
 
 REFUND_WINDOW_DAYS = 3
@@ -163,6 +163,49 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
         "subscription_active": sub_active,
         "can_cancel_star_subscription": can_cancel,
     }
+
+
+def explain_cannot_cancel_star_subscription(
+    user_row: Optional[Dict[str, Any]], meta: Optional[Dict[str, Any]] = None, now: Optional[datetime] = None
+) -> str:
+    """Long-form reason when ``can_cancel_star_subscription`` is false (for /cancel and support)."""
+    now = now or datetime.now(timezone.utc)
+    meta = meta or (subscription_meta_for_user(user_row, now) if user_row else {})
+    if not user_row:
+        return (
+            "Cannot stop auto-renewal: there is no Nightflow account in the database yet. "
+            "Send /start, open the mini-app once, then try /cancel again."
+        )
+    lines = [
+        "Cannot stop auto-renewal with /cancel right now.",
+        "Details:",
+    ]
+    if not user_row.get("last_pro_payment_at"):
+        lines.append(
+            "• No completed Stars payment is stored. This command only applies to paid Pro (not the free trial). "
+            "Use /subscribe or pay from the mini-app first."
+        )
+    if not user_row.get("telegram_payment_charge_id"):
+        lines.append(
+            "• No `telegram_payment_charge_id` in the database — Telegram needs it to turn off renewals. "
+            "Apply the Supabase migration for that column, then complete a new payment (or the id may be missing for old purchases)."
+        )
+    if user_row.get("subscription_cancelled"):
+        lines.append(
+            "• You already cancelled: no further auto-charges. You keep Pro until the end date shown in /status."
+        )
+    if user_row.get("subscription_active") is False and not user_row.get("subscription_cancelled"):
+        lines.append("• Subscription is marked inactive (for example after a full refund).")
+    if not meta.get("has_pro_entitlement"):
+        lines.append("• You do not have active Pro entitlement (trial may have ended without a paid plan).")
+    pro_expires_dt = _parse_dt(user_row.get("pro_expires_at")) if user_row else None
+    if pro_expires_dt and now >= pro_expires_dt:
+        lines.append("• Your paid Pro period has already ended.")
+    if len(lines) == 2:
+        lines.append(
+            "• You can also try: mini-app → Settings → “Cancel Subscription” (same action as /cancel)."
+        )
+    return "\n".join(lines)
 
 
 def subscription_debug_summary(user_row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> str:

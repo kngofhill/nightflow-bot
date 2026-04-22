@@ -44,3 +44,30 @@ def edit_user_star_subscription(
     if not raw.get("ok"):
         return False, raw
     return True, raw
+
+
+def format_telegram_cancel_subscription_error(raw_or_exc: object) -> str:
+    """Human-readable explanation for failed editUserStarSubscription (for bot + API)."""
+    if isinstance(raw_or_exc, Exception):
+        s = str(raw_or_exc)
+        name = type(raw_or_exc).__name__
+    else:
+        s = str(raw_or_exc)
+        name = "Telegram"
+    low = s.lower()
+    parts = [
+        f"Telegram did not accept the cancellation ({name}).",
+        f"Raw: {s[:800]}",
+        "",
+        "Common causes:",
+    ]
+    if "charge" in low and ("invalid" in low or "not found" in low):
+        parts.append("• The charge id is wrong, expired, or was for a one-time payment (not a subscription).")
+    if "already" in low and "cancel" in low:
+        parts.append("• The subscription is already cancelled in Telegram.")
+    if "forbidden" in low or "403" in s:
+        parts.append("• The bot may not be allowed to change this user’s Star subscription.")
+    if "bad request" in low or "400" in s:
+        parts.append("• Request rejected by Telegram — check BotFather: Stars + payments, and a current Bot API build.")
+    parts.append("You can try again or use the mini-app: Settings → Cancel Subscription.")
+    return "\n".join(parts)

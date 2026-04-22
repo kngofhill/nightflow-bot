@@ -23,6 +23,7 @@ from shared.db import (
     insert_notification,
     apply_pro_subscription_from_payment,
     revoke_pro_subscription,
+    mark_star_subscription_cancelled,
 )
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
@@ -32,7 +33,10 @@ from shared.subscription import (
     paid_pro_period_active,
     within_refund_window,
     subscription_debug_summary,
+    subscription_meta_for_user,
+    explain_cannot_cancel_star_subscription,
 )
+from shared.telegram_star_api import format_telegram_cancel_subscription_error
 from shared.time_utils import (
     get_user_now_from_timezone_name,
     combine_local_date_and_time,
@@ -64,8 +68,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"After that, stay on Free (today’s basics) or subscribe with {PRO_PRICE_STARS} Stars / 30 days via /subscribe.\n\n"
         f"Commands:\n"
         f"/subscribe — Nightflow Pro (Telegram Stars)\n"
+        f"/cancel — Stop Pro auto-renewal (same as app; keeps Pro until expiry)\n"
         f"/status — Trial / Pro debug (TESTING)\n"
-        f"/refund — Revoke paid Pro in test mode (within 3 days of purchase)\n"
+        f"/refund — Refund Stars (within 3 days; revokes Pro)\n"
         f"/pause — Pause notifications (Pro)\n"
         f"/resume — Resume notifications"
     )
@@ -246,6 +251,54 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop Telegram Stars auto-renewal (same as mini-app). Keeps Pro until pro_expires_at."""
+    tid = update.effective_user.id
+    row = get_user_by_telegram_id(tid) or {}
+    meta = subscription_meta_for_user(row)
+    if not meta.get("can_cancel_star_subscription"):
+        await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
+        return
+
+    ch = row.get("telegram_payment_charge_id")
+    if not ch:
+        await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
+        return
+
+    try:
+        await context.bot.edit_user_star_subscription(
+            user_id=tid,
+            telegram_payment_charge_id=str(ch),
+            is_canceled=True,
+        )
+    except tg_error.TelegramError as e:
+        logger.warning("edit_user_star_subscription: %s", e)
+        await update.message.reply_text(format_telegram_cancel_subscription_error(e))
+        return
+    except Exception as e:
+        logger.exception("edit_user_star_subscription unexpected: %s", e)
+        await update.message.reply_text(
+            f"Unexpected error talking to Telegram: {type(e).__name__}: {e!s}\n\n"
+            f"{format_telegram_cancel_subscription_error(e)}"
+        )
+        return
+
+    m = mark_star_subscription_cancelled(tid)
+    pe = meta.get("pro_expires_at", "the end date in /status")
+    if m is None:
+        await update.message.reply_text(
+            "Telegram accepted the cancellation, but the database could not store the “cancelled” flag. "
+            "An admin should run Supabase migration `20260422120000_subscription_cancel_and_active.sql`. "
+            f"Your Pro access should still be valid until {pe} if Telegram shows auto-renewal off."
+        )
+        return
+
+    await update.message.reply_text(
+        f"Auto-renewal is off. You keep Nightflow Pro until {pe} (no more automatic Star charges for this plan after that, unless you subscribe again).\n"
+        f"Tip: mini-app → Settings → Cancel Subscription does the same thing."
+    )
+
+
 async def on_refunded_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rp = update.message.refunded_payment if update.message else None
     if not rp or rp.invoice_payload != INVOICE_PAYLOAD_NIGHTFLOW_PRO:
@@ -394,6 +447,7 @@ def main():
     application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("refund", cmd_refund))
     application.add_handler(CommandHandler("status", cmd_status))
+    application.add_handler(CommandHandler("cancel", cmd_cancel_subscription))
     application.add_handler(PreCheckoutQueryHandler(precheckout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment))
     application.add_handler(MessageHandler(RefundedPaymentFilter(), on_refunded_payment))
