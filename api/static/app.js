@@ -289,6 +289,26 @@
         }
     }
 
+    function applyConstantRowToState(row) {
+        if (!row) return;
+        if (!state.schedule) state.schedule = {};
+        for (const k of ['work_start', 'work_end', 'sleep_start', 'sleep_end']) {
+            if (row[k] !== undefined) state.schedule[k] = row[k];
+        }
+        for (const f of ['coffee_windows', 'meal_windows', 'brightness_windows']) {
+            if (row[f] === undefined) continue;
+            let v = row[f];
+            if (typeof v === 'string') {
+                try {
+                    v = JSON.parse(v);
+                } catch (e) {
+                    v = [];
+                }
+            }
+            state.schedule[f] = v;
+        }
+    }
+
     async function reloadScheduleFromApi() {
         try {
             let res = await api(`/schedules/daily/today?telegram_id=${user.id}`);
@@ -1201,9 +1221,32 @@
             $root.querySelectorAll('.js-adj').forEach((b) => {
                 b.addEventListener('click', () => go('settings', true));
             });
-            $root.querySelectorAll('.js-apply').forEach((b) => {
-                b.addEventListener('click', () => {
-                    tg.showAlert('Applied (demo). Connect API to persist.');
+            $root.querySelectorAll('.js-apply').forEach((b, i) => {
+                b.addEventListener('click', async () => {
+                    b.setAttribute('disabled', 'true');
+                    try {
+                        const res = await api(`/schedules/suggestions/apply?telegram_id=${user.id}`, {
+                            method: 'POST',
+                            json: { suggestion_index: i },
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            tg.showAlert(
+                                (data && data.error) || 'Could not apply this suggestion. Try again.'
+                            );
+                            b.removeAttribute('disabled');
+                            return;
+                        }
+                        applyConstantRowToState(data);
+                        const ok = await reloadScheduleFromApi();
+                        if (!ok) console.warn('reload after suggestion apply');
+                        tg.showAlert('Your schedule was updated.');
+                        go('settings', true);
+                    } catch (e) {
+                        console.warn('apply suggestion', e);
+                        tg.showAlert('Could not apply. Check your connection.');
+                    }
+                    b.removeAttribute('disabled');
                 });
             });
         })();
@@ -1776,9 +1819,16 @@
                     method: 'PATCH',
                     json: payload,
                 });
-                if (!res.ok) throw new Error('x');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save schedule');
+                    state.screen = 'settings';
+                    render();
+                    return;
+                }
+                applyConstantRowToState(data);
                 const ok = await reloadScheduleFromApi();
-                if (!ok) throw new Error('x');
+                if (!ok) console.warn('reloadScheduleFromApi after work/sleep save');
                 state.screen = 'settings';
                 state.stack = ['dashboard'];
                 render();
@@ -1833,9 +1883,14 @@
                     method: 'PATCH',
                     json: { coffee_windows: next },
                 });
-                if (!res.ok) throw new Error('x');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save coffee times');
+                    return;
+                }
+                applyConstantRowToState(data);
                 const ok = await reloadScheduleFromApi();
-                if (!ok) throw new Error('x');
+                if (!ok) console.warn('reloadScheduleFromApi after coffee save');
                 closeModal();
                 render();
             } catch (e) {
@@ -1882,9 +1937,14 @@
                     method: 'PATCH',
                     json: { meal_windows: next },
                 });
-                if (!res.ok) throw new Error('x');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save meal times');
+                    return;
+                }
+                applyConstantRowToState(data);
                 const ok = await reloadScheduleFromApi();
-                if (!ok) throw new Error('x');
+                if (!ok) console.warn('reloadScheduleFromApi after meal save');
                 closeModal();
                 render();
             } catch (e) {
@@ -1936,9 +1996,14 @@
                     method: 'PATCH',
                     json: { brightness_windows: next },
                 });
-                if (!res.ok) throw new Error('x');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save light reminders');
+                    return;
+                }
+                applyConstantRowToState(data);
                 const ok = await reloadScheduleFromApi();
-                if (!ok) throw new Error('x');
+                if (!ok) console.warn('reloadScheduleFromApi after light save');
                 closeModal();
                 render();
             } catch (e) {

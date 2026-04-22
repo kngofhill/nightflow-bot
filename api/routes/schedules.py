@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import sys
 import json
 
@@ -434,16 +434,15 @@ def set_day_off():
     return jsonify({"ok": True, "message": "Day off set successfully!"})
 
 
-@bp.route("/suggestions", methods=["GET"])
-def weekly_suggestions():
-    user_id, err = get_user_from_request()
-    if err:
-        return err
+def _add_minutes_to_time_hhmm(tstr: str, delta_minutes: int) -> str:
+    t = str_to_time(tstr)
+    if not t:
+        return tstr
+    base = datetime.combine(date.today(), t) + timedelta(minutes=delta_minutes)
+    return time_to_str(base.time())
 
-    denied = require_pro_access(user_id)
-    if denied:
-        return denied
 
+def _build_weekly_suggestion_items(user_id) -> list:
     timezone = _user_timezone(user_id)
     now_local = get_user_now_from_timezone_name(timezone)
     local_today = now_local.date()
@@ -458,7 +457,7 @@ def weekly_suggestions():
         .execute()
     )
     if not const.data:
-        return jsonify({"items": []})
+        return []
 
     schedule = const.data[0]
     schedule["coffee_windows"] = safe_json_parse(schedule.get("coffee_windows"))
@@ -534,28 +533,36 @@ def weekly_suggestions():
     suggestions = []
 
     if coffee_slots:
-        coffee_misses = [(s.get("time"), slot_missed_count(s.get("time"), "coffee")) for s in coffee_slots if s.get("time")]
+        coffee_misses = [
+            (s.get("time"), slot_missed_count(s.get("time"), "coffee")) for s in coffee_slots if s.get("time")
+        ]
         coffee_misses.sort(key=lambda x: x[1], reverse=True)
         top_time, top_missed = coffee_misses[0]
         if top_missed >= 2:
+            new_t = shift_time_hhmm(top_time, -30)
             suggestions.append(
                 {
                     "title": f"☕ {top_time} COFFEE",
                     "body": f"Missed {top_missed} times this week.",
-                    "action": f"MOVE TO {shift_time_hhmm(top_time, -30)}",
+                    "action": f"MOVE TO {new_t}",
+                    "apply": {"op": "shift_coffee", "from": top_time, "to": new_t},
                 }
             )
 
     if meal_slots:
-        meal_misses = [(s.get("time"), slot_missed_count(s.get("time"), "meals")) for s in meal_slots if s.get("time")]
+        meal_misses = [
+            (s.get("time"), slot_missed_count(s.get("time"), "meals")) for s in meal_slots if s.get("time")
+        ]
         meal_misses.sort(key=lambda x: x[1], reverse=True)
         top_time, top_missed = meal_misses[0]
         if top_missed >= 2:
+            new_t = shift_time_hhmm(top_time, -30)
             suggestions.append(
                 {
                     "title": f"🍽️ {top_time} MEAL",
                     "body": f"Missed {top_missed} times this week.",
-                    "action": f"MOVE TO {shift_time_hhmm(top_time, -30)}",
+                    "action": f"MOVE TO {new_t}",
+                    "apply": {"op": "shift_meal", "from": top_time, "to": new_t},
                 }
             )
 
@@ -576,7 +583,151 @@ def weekly_suggestions():
                     "title": "😴 SLEEP WINDOW",
                     "body": f"Deficit: {deficit_hours} hours this week.",
                     "action": "ADD 30 MINUTES",
+                    "apply": {"op": "extend_sleep", "delta_minutes": 30},
                 }
             )
 
-    return jsonify({"items": suggestions})
+    return suggestions
+
+
+@bp.route("/suggestions/apply", methods=["POST"])
+def apply_weekly_suggestion():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
+    body = request.get_json(silent=True) or {}
+    try:
+        idx = int(body.get("suggestion_index", body.get("index", -1)))
+    except (TypeError, ValueError):
+        idx = -1
+    if idx < 0:
+        return jsonify({"error": "suggestion_index required"}), 400
+
+    const = (
+        supabase_client.table("constant_schedules")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .execute()
+    )
+    if not const.data:
+        return jsonify({"error": "No active schedule"}), 404
+
+    row = dict(const.data[0])
+    row_id = row["id"]
+    items = _build_weekly_suggestion_items(user_id)
+    if idx >= len(items):
+        return jsonify({"error": "That suggestion is no longer available. Refresh the list."}), 400
+    apply_op = (items[idx] or {}).get("apply")
+    if not apply_op or not apply_op.get("op"):
+        return jsonify({"error": "No apply action for this item"}), 400
+
+    op = apply_op["op"]
+    updates = {}
+    if op == "shift_coffee":
+        from_t = str(apply_op.get("from") or "").strip()
+        to_t = str(apply_op.get("to") or "").strip()
+        ws = str_to_time(from_t)
+        wt = str_to_time(to_t)
+        if not ws or not wt:
+            return jsonify({"error": "Invalid time"}), 400
+        from_key = time_to_str(ws)
+        to_key = time_to_str(wt)
+        cwin = safe_json_parse(row.get("coffee_windows")) or []
+        cwin = [dict(x) for x in cwin]
+        hit = False
+        for it in cwin:
+            cur = it.get("time")
+            tc = str_to_time(str(cur)[:8] if cur is not None else "")
+            if tc and time_to_str(tc) == from_key:
+                it["time"] = to_key
+                hit = True
+                break
+        if not hit:
+            return jsonify({"error": "That coffee time was not found (schedule may have changed)."}), 400
+        updates["coffee_windows"] = json.dumps(cwin)
+    elif op == "shift_meal":
+        from_t = str(apply_op.get("from") or "").strip()
+        to_t = str(apply_op.get("to") or "").strip()
+        ws = str_to_time(from_t)
+        wt = str_to_time(to_t)
+        if not ws or not wt:
+            return jsonify({"error": "Invalid time"}), 400
+        from_key = time_to_str(ws)
+        to_key = time_to_str(wt)
+        mwin = safe_json_parse(row.get("meal_windows")) or []
+        mwin = [dict(x) for x in mwin]
+        hit = False
+        for it in mwin:
+            cur = it.get("time")
+            tc = str_to_time(str(cur)[:8] if cur is not None else "")
+            if tc and time_to_str(tc) == from_key:
+                it["time"] = to_key
+                hit = True
+                break
+        if not hit:
+            return jsonify({"error": "That meal time was not found (schedule may have changed)."}), 400
+        updates["meal_windows"] = json.dumps(mwin)
+    elif op == "extend_sleep":
+        delta = int(apply_op.get("delta_minutes") or 0)
+        if delta < 0 or delta > 180:
+            return jsonify({"error": "Invalid delta"}), 400
+        ss = row.get("sleep_start")
+        if not ss:
+            return jsonify({"error": "Set sleep times first in Settings."}), 400
+        t = str_to_time(str(ss)[:8] if isinstance(ss, str) else str(ss))
+        if not t:
+            return jsonify({"error": "Invalid sleep time"}), 400
+        # Add sleep duration by moving bed earlier (e.g. 30 min = sleep_start 30m earlier)
+        new_ss = _add_minutes_to_time_hhmm(time_to_str(t), -delta)
+        updates["sleep_start"] = new_ss
+    else:
+        return jsonify({"error": "Unknown op"}), 400
+
+    if not updates:
+        return jsonify({"error": "Nothing to update"}), 400
+
+    supabase_client.table("constant_schedules").update(updates).eq("id", row_id).execute()
+
+    refreshed = (
+        supabase_client.table("constant_schedules")
+        .select("*")
+        .eq("id", row_id)
+        .execute()
+    )
+    if not refreshed.data:
+        return jsonify({"error": "Update failed"}), 500
+    out = dict(refreshed.data[0])
+    for f in ("coffee_windows", "meal_windows", "brightness_windows"):
+        out[f] = safe_json_parse(out.get(f))
+
+    time_key_set = ("work_start", "work_end", "sleep_start", "sleep_end")
+    if any(k in time_key_set for k in updates):
+        _sync_today_daily_from_times(
+            user_id,
+            out.get("shift_type") or row.get("shift_type"),
+            out.get("work_start"),
+            out.get("work_end"),
+            out.get("sleep_start"),
+            out.get("sleep_end"),
+        )
+
+    return jsonify(out)
+
+
+@bp.route("/suggestions", methods=["GET"])
+def weekly_suggestions():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
+    return jsonify({"items": _build_weekly_suggestion_items(user_id)})
