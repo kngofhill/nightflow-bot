@@ -1623,21 +1623,6 @@
                         <div style="margin-top:6px;">SLEEP: ${escapeHtml(formatTime(sched?.sleep_start))} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
                     </div>
                 </div>
-                <div class="nf-card" style="margin:12px 0 0;">
-                    <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.45;">
-                        <strong>What updates Telegram</strong> — The bot always reads your <strong>current saved</strong> times
-                        and your notification toggles. Changing toggles only turns reminder <em>types</em> on or off, not
-                        the clock times (those follow what is stored above).
-                    </p>
-                    <p class="nf-muted" style="font-size:0.86rem;margin:0 0 12px;line-height:1.45;">
-                        Editing work &amp; sleep in <strong>EDIT</strong> updates <em>only</em> those four times; it
-                        <strong>does not</strong> re-generate coffee, meal, or light slots — that is intentional. Use
-                        the button below to run the Nightflow planner again on your <em>current</em> work &amp; sleep.
-                    </p>
-                    <button type="button" class="nf-cta" id="btn-rebuild-rec">↻ Rebuild recommended schedule</button>
-                    <p class="nf-muted" style="font-size:0.8rem;margin:8px 0 0;">Replaces coffee, meal, and light
-                        with a new recommendation. Uses the work &amp; sleep times shown in this screen.</p>
-                </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>☕ COFFEE TIMES</h3>
@@ -1658,6 +1643,13 @@
                         <button type="button" class="nf-link" id="ed-li">EDIT</button>
                     </div>
                     <div class="nf-card">${lightSummary(sched)}</div>
+                </div>
+                <div class="nf-card" style="margin:12px 0 0;">
+                    <p class="nf-muted" style="font-size:0.84rem;margin:0 0 10px;line-height:1.4;">
+                        Rebuild coffee, meal &amp; light from your <strong>current</strong> work &amp; sleep
+                        (Work &amp; sleep <strong>EDIT</strong> alone does not).
+                    </p>
+                    <button type="button" class="nf-cta" id="btn-rebuild-rec">↻ Rebuild recommended schedule</button>
                 </div>
                 <p class="nf-field-label">⏰ NOTIFICATIONS</p>
                 <div class="nf-card">
@@ -1701,11 +1693,7 @@
         const btnRe = document.getElementById('btn-rebuild-rec');
         if (btnRe) {
             btnRe.onclick = async () => {
-                if (
-                    !window.confirm(
-                        'Replace coffee, meal, and light with a new recommendation based on your current work and sleep?'
-                    )
-                ) {
+                if (!window.confirm('Replace coffee, meal, and light using your current work and sleep?')) {
                     return;
                 }
                 renderLoading();
@@ -1727,7 +1715,7 @@
                     await loadUserAndSchedule();
                     state.screen = 'settings';
                     state.stack = ['dashboard'];
-                    tg.showAlert('Recommended schedule updated — coffee, meal, and light times are refreshed.');
+                    tg.showAlert('Schedule rebuilt.');
                     render();
                 } catch (e) {
                     console.error(e);
@@ -1914,8 +1902,8 @@
             <p class="nf-field-label">😴 SLEEP</p>
             <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'ms-s')}</div>
             <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'ms-e')}</div>
-            <p class="nf-sub">Only work &amp; sleep are updated here. Coffee, meal, and light are <strong>not</strong> recalculated — use
-                <strong>Settings → Rebuild recommended schedule</strong> to refresh those from your current work &amp; sleep.</p>
+            <p class="nf-sub">Work &amp; sleep only. For new coffee, meal, and light, use
+                <strong>Rebuild recommended schedule</strong> (below light reminders in Settings).</p>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="m-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="m-can">CANCEL</button>
