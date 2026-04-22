@@ -104,12 +104,135 @@
 
     const TIME_OPTS = timeOptions();
 
+    function snapMinute(m) {
+        const q = [0, 15, 30, 45];
+        return q.reduce((best, v) => (Math.abs(v - m) < Math.abs(best - m) ? v : best), 0);
+    }
+
+    function parseTimeParts(s) {
+        if (!s || typeof s !== 'string') return { h: 22, m: 0 };
+        const p = s.trim().split(':');
+        const hh = Math.min(23, Math.max(0, parseInt(p[0], 10) || 0));
+        const rawM = parseInt(p[1], 10);
+        const mm = Number.isNaN(rawM) ? 0 : snapMinute(Math.min(59, Math.max(0, rawM)));
+        return { h: hh, m: mm };
+    }
+
+    function timePickerField(name, value, id) {
+        const v0 = (value && String(value).slice(0, 5)) || '22:00';
+        const { h, m } = parseTimeParts(v0);
+        const v = `${pad2(h)}:${pad2(m)}`;
+        const label = name || 'Time';
+        return `<div class="nf-time-field">
+            <input type="hidden" id="${id}" value="${v}" />
+            <button type="button" class="nf-time-btn" data-nf-time-id="${id}" aria-label="${escapeHtml(
+            String(label)
+        )}">
+                <span class="nf-time-btn-main">${escapeHtml(v)}</span>
+                <span class="nf-time-btn-chev" aria-hidden="true">▾</span>
+            </button>
+        </div>`;
+    }
+
     function selectTimeHtml(name, value, id) {
-        const v = value || '22:00';
-        const opts = TIME_OPTS.map(
-            (t) => `<option value="${t}"${t === v ? ' selected' : ''}>${t}</option>`
-        ).join('');
-        return `<select id="${id}" name="${name}" class="nf-select" aria-label="${name}">${opts}</select>`;
+        return timePickerField(name, value, id);
+    }
+
+    function openTimePickerModal(currentValue, onSet) {
+        const p = parseTimeParts(currentValue);
+        let selH = p.h;
+        let selM = p.m;
+        const minuteOpts = [0, 15, 30, 45];
+
+        const hBtns = Array.from({ length: 24 }, (_, hr) => {
+            const a = hr === selH ? ' is-active' : '';
+            return `<button type="button" class="nf-tp-opt${a}" data-nf-h="${hr}">${pad2(hr)}</button>`;
+        }).join('');
+        const mBtns = minuteOpts
+            .map((mm) => {
+                const a = mm === selM ? ' is-active' : '';
+                return `<button type="button" class="nf-tp-opt${a}" data-nf-m="${mm}">:${pad2(mm)}</button>`;
+            })
+            .join('');
+
+        const html = `<div class="nf-tp" id="nf-tp-box">
+            <h3 class="nf-tp-title">Set time</h3>
+            <p class="nf-tp-sub">15-minute steps</p>
+            <div class="nf-tp-cols">
+                <div class="nf-tp-col">
+                    <div class="nf-tp-lab">Hour</div>
+                    <div class="nf-tp-scroll">${hBtns}</div>
+                </div>
+                <div class="nf-tp-mid">:</div>
+                <div class="nf-tp-col">
+                    <div class="nf-tp-lab">Min</div>
+                    <div class="nf-tp-scroll" id="nf-tp-mcol">${mBtns}</div>
+                </div>
+            </div>
+            <div class="nf-tp-preview" id="nf-tp-preview">${pad2(selH)}:${pad2(selM)}</div>
+            <div class="nf-tp-actions">
+                <button type="button" class="nf-cta nf-cta-secondary" id="nf-tp-cancel">Cancel</button>
+                <button type="button" class="nf-cta" id="nf-tp-ok">Apply</button>
+            </div>
+        </div>`;
+
+        openModal(html, { sheetClass: 'nf-tp-sheet' });
+        const box = $modal.querySelector('#nf-tp-box');
+        if (!box) return;
+        $modal.querySelectorAll('.nf-tp-scroll .is-active').forEach((el) => {
+            try {
+                el.scrollIntoView({ block: 'center' });
+            } catch (e) {
+                /* ignore */
+            }
+        });
+
+        function markActive() {
+            $modal.querySelectorAll('[data-nf-h]').forEach((b) => {
+                b.classList.toggle('is-active', parseInt(b.getAttribute('data-nf-h'), 10) === selH);
+            });
+            $modal.querySelectorAll('[data-nf-m]').forEach((b) => {
+                b.classList.toggle('is-active', parseInt(b.getAttribute('data-nf-m'), 10) === selM);
+            });
+            const pr = $modal.querySelector('#nf-tp-preview');
+            if (pr) pr.textContent = `${pad2(selH)}:${pad2(selM)}`;
+        }
+
+        box.addEventListener('click', (e) => {
+            const hb = e.target.closest('[data-nf-h]');
+            const mb = e.target.closest('[data-nf-m]');
+            if (hb) {
+                selH = parseInt(hb.getAttribute('data-nf-h'), 10);
+                markActive();
+            }
+            if (mb) {
+                selM = parseInt(mb.getAttribute('data-nf-m'), 10);
+                markActive();
+            }
+        });
+        $modal.querySelector('#nf-tp-cancel').onclick = closeModal;
+        $modal.querySelector('#nf-tp-ok').onclick = () => {
+            onSet(`${pad2(selH)}:${pad2(selM)}`);
+            closeModal();
+        };
+    }
+
+    function initTimePickerButtons(root) {
+        if (!root) return;
+        root.querySelectorAll('[data-nf-time-id]').forEach((btn) => {
+            if (btn.getAttribute('data-nf-tp-bound') === '1') return;
+            btn.setAttribute('data-nf-tp-bound', '1');
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-nf-time-id');
+                const input = document.getElementById(id);
+                if (!input) return;
+                openTimePickerModal(input.value, (next) => {
+                    input.value = next;
+                    const main = btn.querySelector('.nf-time-btn-main');
+                    if (main) main.textContent = next;
+                });
+            });
+        });
     }
 
     function nowClockStr() {
@@ -347,7 +470,7 @@
             String(msg || '')
                 .replace(/\s+/g, ' ')
                 .trim();
-        const push = (time, label, icon) => {
+        const push = (time, label, icon, kind) => {
             if (!time) return;
             const t = formatTime(time);
             const lab = clean(label) || 'Event';
@@ -359,31 +482,32 @@
                 time: t,
                 label: lab,
                 icon,
+                kind: kind || 'other',
                 m,
                 sort: timeSortKeyForSchedule(t, schedule),
             });
         };
 
         if (schedule.work_start) {
-            push(schedule.work_start, 'Shift starts', '🌙');
+            push(schedule.work_start, 'Shift starts', '🌙', 'work_start');
         }
         if (schedule.work_end) {
-            push(schedule.work_end, 'Shift ends', '🏁');
+            push(schedule.work_end, 'Shift ends', '🏁', 'work_end');
         }
         if (schedule.sleep_start) {
-            push(schedule.sleep_start, 'Bedtime', '😴');
+            push(schedule.sleep_start, 'Bedtime', '😴', 'sleep_start');
         }
         if (schedule.sleep_end) {
-            push(schedule.sleep_end, 'Wake', '☀️');
+            push(schedule.sleep_end, 'Wake', '☀️', 'sleep_end');
         }
         (schedule.meal_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Meal', '🍽️');
+            push(w.time, (w && w.message) || 'Meal', '🍽️', 'meal');
         });
         (schedule.coffee_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Coffee', '☕');
+            push(w.time, (w && w.message) || 'Coffee', '☕', 'coffee');
         });
         (schedule.brightness_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Light', '💡');
+            push(w.time, (w && w.message) || 'Light', '💡', 'light');
         });
 
         ev.sort((a, b) => a.sort - b.sort);
@@ -531,6 +655,7 @@
         if (opts.closeOnBackdrop !== false) {
             $modal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
         }
+        initTimePickerButtons($modal);
     }
 
     function closeModal() {
@@ -596,6 +721,7 @@
                 <button type="button" class="nf-cta" id="btn-create-const">CREATE SCHEDULE</button>
             </div>`;
         document.getElementById('btn-sp-back').onclick = () => go('onboarding', false);
+        initTimePickerButtons($root);
         document.getElementById('btn-create-const').onclick = async () => {
             const ws = document.getElementById('ws').value;
             const we = document.getElementById('we').value;
@@ -685,6 +811,7 @@
                 <p class="nf-sub nf-center">Rotating sync with the server is not available yet — demo mode will show the rotating dashboard.</p>
             </div>`;
         document.getElementById('btn-sr-back').onclick = () => go('onboarding', false);
+        initTimePickerButtons($root);
         document.getElementById('btn-create-rot').onclick = async () => {
             renderLoading();
             const ws = document.getElementById('rn_ws').value;
@@ -754,6 +881,9 @@
                 new Date()
             ),
             energy: ['😴', '😐', '😊', '⚡', '⚡', '😊', '😐'],
+            energy_trend: 'steady',
+            energy_breakdown: { drained: 1, low: 1, ok: 2, great: 1, days_logged: 5 },
+            habits: { avg_coffee_adherence_pct: 64, avg_meal_adherence_pct: 75 },
             coffee: [
                 { label: '21:30', pct: 85 },
                 { label: '01:30', pct: 42 },
@@ -766,6 +896,39 @@
             ],
             sleepPct: 62,
         };
+    }
+
+    function energyMoodDonutStyle(b) {
+        const d = b || {};
+        const p = [d.drained | 0, d.low | 0, d.ok | 0, d.great | 0];
+        const t = p[0] + p[1] + p[2] + p[3];
+        if (t < 1) {
+            return 'var(--tg-theme-secondary-bg-color, #3a3a45)';
+        }
+        let a = 0;
+        const cols = ['#5c6bc0', '#90a4ae', '#26a69a', '#ffca28'];
+        const segs = [];
+        p.forEach((n, i) => {
+            if (n < 1) return;
+            const pct = (n / t) * 100;
+            const end = a + pct;
+            segs.push(`${cols[i]} ${a}% ${end}%`);
+            a = end;
+        });
+        return segs.length ? `conic-gradient(${segs.join(', ')})` : 'var(--tg-theme-secondary-bg-color, #3a3a45)';
+    }
+
+    function weekTrendLabel(t) {
+        if (t === 'up') {
+            return '<div class="nf-trend nf-trend--up"><span class="nf-trend-ico">↑</span> Energy: stronger toward the end of the week</div>';
+        }
+        if (t === 'down') {
+            return '<div class="nf-trend nf-trend--down"><span class="nf-trend-ico">↓</span> Energy: heavier than early in the week</div>';
+        }
+        if (t === 'steady') {
+            return '<div class="nf-trend nf-trend--mid"><span class="nf-trend-ico">→</span> Energy: stable across the week</div>';
+        }
+        return '';
     }
 
     function mockTransition() {
@@ -936,12 +1099,39 @@
         }
 
         const events = collectEvents(sched);
+        const kc = (k) =>
+            ({
+                work_start: 'nf-tl--wstart',
+                work_end: 'nf-tl--wend',
+                sleep_start: 'nf-tl--sleepin',
+                sleep_end: 'nf-tl--wake',
+                coffee: 'nf-tl--coffee',
+                meal: 'nf-tl--meal',
+                light: 'nf-tl--light',
+                other: 'nf-tl--other',
+            }[k] || 'nf-tl--other');
         const lines = events
-            .map(
-                (e) =>
-                    `<li><span class="nf-list-time">${escapeHtml(e.time)}</span><span>${escapeHtml(e.icon)} ${escapeHtml(e.label)}</span></li>`
-            )
+            .map((e) => {
+                const cls = kc(e.kind);
+                return `<li class="nf-tl-item ${cls}">
+                    <span class="nf-tl-dot" aria-hidden="true"></span>
+                    <div class="nf-tl-body">
+                        <span class="nf-tl-time">${escapeHtml(e.time)}</span>
+                        <div class="nf-tl-line">
+                            <span class="nf-tl-ico" aria-hidden="true">${escapeHtml(e.icon)}</span>
+                            <span class="nf-tl-text">${escapeHtml(e.label)}</span>
+                        </div>
+                    </div>
+                </li>`;
+            })
             .join('');
+
+        const hasWE =
+            events.some((x) => x.kind === 'work_end') && events.some((x) => x.kind === 'sleep_start');
+        const bridge =
+            hasWE
+                ? '<p class="nf-tl-bridge">Wind down from work into sleep — your recovery window is below.</p>'
+                : '';
 
         $root.innerHTML = `
             <div class="nf-screen">
@@ -953,8 +1143,9 @@
                 <p class="nf-muted" style="margin-top:0;">TODAY · ${escapeHtml(
                     new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                 )} · ${escapeHtml((sched.shift_type || '').toUpperCase())}</p>
-                <ul class="nf-list nf-list-schedule">${lines}</ul>
-                <p class="nf-muted nf-schedule-foot">Order follows your shift (overnight times after midnight are listed after evening).</p>
+                ${bridge}
+                <ul class="nf-tl nf-timeline">${lines}</ul>
+                <p class="nf-muted nf-schedule-foot">Chronological order for your shift. Colors: work, sleep, coffee, meals, light.</p>
                 <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
             </div>`;
         document.getElementById('bf').onclick = back;
@@ -1065,16 +1256,42 @@
                 (w.coffee && w.coffee.length) ||
                 (w.meals && w.meals.length) ||
                 (w.sleepPct | 0) > 0;
+            const eb = w.energy_breakdown || {};
+            const habits = w.habits || {};
+            const moodBg = energyMoodDonutStyle(eb);
+            const hCoffee = habits.avg_coffee_adherence_pct | 0;
+            const hMeal = habits.avg_meal_adherence_pct | 0;
+            const sl = w.sleepPct | 0;
+            const dLog = (eb.days_logged | 0) || 0;
+            const dLogLabel = dLog === 1 ? 'day' : 'days';
             $root.innerHTML = `
-                <div class="nf-screen">
+                <div class="nf-screen nf-week-screen">
                     <div class="nf-topbar">
                         <button type="button" class="nf-back" id="bw">← BACK</button>
                         <h1>Weekly Report</h1>
                         <span></span>
                     </div>
                     <div class="nf-week-head">📅 ${escapeHtml(w.range || '')}</div>
+                    ${weekTrendLabel(w.energy_trend)}
+                    <div class="nf-card nf-week-hero">
+                        <div class="nf-week-hero-row">
+                            <div class="nf-donut nf-donut--mood" style="background:${moodBg};">
+                                <div class="nf-donut-hole"></div>
+                            </div>
+                            <div class="nf-week-hero-copy">
+                                <p class="nf-week-hero-title">Mood mix (logged days)</p>
+                                <p class="nf-muted nf-week-hero-sub">${dLog} ${dLogLabel} with energy logs</p>
+                                <ul class="nf-legend" aria-label="Energy distribution">
+                                    <li><span class="nf-legend-swatch" style="background:#5c6bc0"></span> Drained</li>
+                                    <li><span class="nf-legend-swatch" style="background:#90a4ae"></span> Low</li>
+                                    <li><span class="nf-legend-swatch" style="background:#26a69a"></span> OK</li>
+                                    <li><span class="nf-legend-swatch" style="background:#ffca28"></span> Great</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
                     <div class="nf-card" style="margin-bottom:12px;">
-                        <p class="nf-meter-label" style="margin-top:0;">ENERGY (Mon – Sun)</p>
+                        <p class="nf-meter-label" style="margin-top:0;">Daily energy</p>
                         <div class="nf-week-energy">
                         ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                             .map(
@@ -1086,34 +1303,43 @@
                             .join('')}
                         </div>
                     </div>
-                    <p class="nf-meter-label">COFFEE</p>
-                    ${(
-                        w.coffee || []
-                    )
+                    <div class="nf-week-habits">
+                        <div class="nf-card nf-week-donut-card">
+                            <p class="nf-meter-label" style="margin-top:0;">Coffee (avg)</p>
+                            <div class="nf-donut nf-donut--ring" style="--p:${hCoffee};"><span class="nf-donut-pct">${hCoffee}%</span></div>
+                            <p class="nf-muted tiny" style="text-align:center;">Adherence on scheduled coffee times</p>
+                        </div>
+                        <div class="nf-card nf-week-donut-card">
+                            <p class="nf-meter-label" style="margin-top:0;">Meals (avg)</p>
+                            <div class="nf-donut nf-donut--ring" style="--p:${hMeal};"><span class="nf-donut-pct">${hMeal}%</span></div>
+                            <p class="nf-muted tiny" style="text-align:center;">Adherence on scheduled meal times</p>
+                        </div>
+                    </div>
+                    <p class="nf-meter-label">Per-slot coffee</p>
+                    ${(w.coffee || [])
                         .map(
                             (c) => `
                     <div class="nf-meter-row">
                         <div class="tiny">${escapeHtml(c.label)}</div>
-                        <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
+                        <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
                         <div class="tiny">${c.pct}%</div>
                     </div>`
                         )
                         .join('')}
-                    <p class="nf-meter-label">MEALS</p>
-                    ${(
-                        w.meals || []
-                    )
+                    <p class="nf-meter-label">Per-slot meals</p>
+                    ${(w.meals || [])
                         .map(
                             (c) => `
                     <div class="nf-meter-row">
                         <div class="tiny">${escapeHtml(c.label)}</div>
-                        <div class="nf-meter"><div style="width:${c.pct}%"></div></div>
+                        <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
                         <div class="tiny">${c.pct}%</div>
                     </div>`
                         )
                         .join('')}
-                    <p class="nf-meter-label">SLEEP</p>
-                    <div class="nf-meter" role="img" aria-label="Sleep quality ${w.sleepPct || 0}%"><div class="nf-meter-fill" style="width:${w.sleepPct || 0}%"></div></div>
+                    <p class="nf-meter-label">Sleep quality (avg)</p>
+                    <div class="nf-donut nf-donut--ring nf-donut--wide" style="--p:${sl};"><span class="nf-donut-pct">${sl}%</span></div>
+                    <p class="nf-muted tiny" style="text-align:center;margin:0 0 8px;">From end-of-shift check-ins</p>
                     ${
                         hasData
                             ? ''

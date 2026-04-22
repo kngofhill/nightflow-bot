@@ -98,6 +98,7 @@ def weekly_report():
         summaries_by_date[str(r.get("local_date"))] = r
 
     energy_emojis = []
+    energy_numeric = [None] * 7
     sleep_vals = []
     for i in range(7):
         d = week_start + timedelta(days=i)
@@ -105,11 +106,38 @@ def weekly_report():
         if r and r.get("energy") is not None:
             ev = int(r.get("energy"))
             energy_emojis.append(EMOJI_ENERGY.get(ev, "—"))
+            if 1 <= ev <= 4:
+                energy_numeric[i] = ev
         else:
             energy_emojis.append("—")
 
         if r and r.get("sleep_quality") is not None:
             sleep_vals.append(int(r.get("sleep_quality")))
+
+    def _week_energy_trend(nums):
+        early = [nums[i] for i in (0, 1, 2) if nums[i] is not None]
+        late = [nums[i] for i in (4, 5, 6) if nums[i] is not None]
+        if len(early) < 1 or len(late) < 1:
+            flat = [x for x in nums if x is not None]
+            if len(flat) < 3:
+                return None
+            m = len(flat) // 2
+            a = sum(flat[:m]) / m
+            b = sum(flat[m:]) / (len(flat) - m)
+        else:
+            a = sum(early) / len(early)
+            b = sum(late) / len(late)
+        if b - a > 0.35:
+            return "up"
+        if a - b > 0.35:
+            return "down"
+        return "steady"
+
+    energy_count = {1: 0, 2: 0, 3: 0, 4: 0}
+    for n in energy_numeric:
+        if n in energy_count:
+            energy_count[n] += 1
+    days_with_energy = sum(energy_count.values())
 
     def slot_pct(slot_time, kind):
         ok = 0
@@ -138,6 +166,11 @@ def weekly_report():
     else:
         sleep_pct = 0
 
+    coffee_pcts = [c["pct"] for c in coffee] if coffee else []
+    meal_pcts = [m["pct"] for m in meals] if meals else []
+    avg_coffee = int(round(sum(coffee_pcts) / len(coffee_pcts))) if coffee_pcts else 0
+    avg_meal = int(round(sum(meal_pcts) / len(meal_pcts))) if meal_pcts else 0
+
     range_label = f"{week_start.strftime('%b')} {week_start.day} – {week_end.strftime('%b')} {week_end.day}, {week_end.year}"
 
     report_data = {
@@ -146,6 +179,18 @@ def weekly_report():
         "coffee": coffee,
         "meals": meals,
         "sleepPct": sleep_pct,
+        "energy_trend": _week_energy_trend(energy_numeric),
+        "energy_breakdown": {
+            "drained": energy_count[1],
+            "low": energy_count[2],
+            "ok": energy_count[3],
+            "great": energy_count[4],
+            "days_logged": days_with_energy,
+        },
+        "habits": {
+            "avg_coffee_adherence_pct": avg_coffee,
+            "avg_meal_adherence_pct": avg_meal,
+        },
     }
 
     return jsonify(report_data)
