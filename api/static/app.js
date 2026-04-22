@@ -137,6 +137,18 @@
         return timePickerField(name, value, id);
     }
 
+    function dismissTimePickerLayer(layer) {
+        if (layer && layer.parentNode) {
+            layer.remove();
+        }
+        const hasParentModal = $modal.querySelector('.modal-backdrop, .modal-sheet');
+        const hasTimeLayer = $modal.querySelector('.nf-tp-layer');
+        if (!hasParentModal && !hasTimeLayer) {
+            $modal.classList.remove('open');
+            $modal.setAttribute('aria-hidden', 'true');
+        }
+    }
+
     function openTimePickerModal(currentValue, onSet) {
         const p = parseTimeParts(currentValue);
         let selH = p.h;
@@ -154,7 +166,9 @@
             })
             .join('');
 
-        const html = `<div class="nf-tp" id="nf-tp-box">
+        $modal.querySelectorAll('.nf-tp-layer').forEach((el) => el.remove());
+
+        const inner = `<div class="nf-tp" data-nf-tp-root>
             <h3 class="nf-tp-title">Set time</h3>
             <p class="nf-tp-sub">5-minute steps</p>
             <div class="nf-tp-cols">
@@ -165,20 +179,36 @@
                 <div class="nf-tp-mid">:</div>
                 <div class="nf-tp-col">
                     <div class="nf-tp-lab">Min</div>
-                    <div class="nf-tp-scroll" id="nf-tp-mcol">${mBtns}</div>
+                    <div class="nf-tp-scroll" data-nf-tp-mcol="1">${mBtns}</div>
                 </div>
             </div>
-            <div class="nf-tp-preview" id="nf-tp-preview">${pad2(selH)}:${pad2(selM)}</div>
+            <div class="nf-tp-preview" data-nf-tp-preview>${pad2(selH)}:${pad2(selM)}</div>
             <div class="nf-tp-actions">
-                <button type="button" class="nf-cta nf-cta-secondary" id="nf-tp-cancel">Cancel</button>
-                <button type="button" class="nf-cta" id="nf-tp-ok">Apply</button>
+                <button type="button" class="nf-cta nf-cta-secondary" data-nf-tp-cancel>Cancel</button>
+                <button type="button" class="nf-cta" data-nf-tp-ok>Apply</button>
             </div>
         </div>`;
 
-        openModal(html, { sheetClass: 'nf-tp-sheet' });
-        const box = $modal.querySelector('#nf-tp-box');
+        const layer = document.createElement('div');
+        layer.className = 'nf-tp-layer';
+        layer.setAttribute('role', 'dialog');
+        layer.setAttribute('aria-modal', 'true');
+        layer.innerHTML = `<div class="nf-tp-backdrop" data-nf-tp-backdrop></div>
+            <div class="nf-tp-surface">${inner}</div>`;
+
+        $modal.classList.add('open');
+        $modal.setAttribute('aria-hidden', 'false');
+        $modal.appendChild(layer);
+
+        const box = layer.querySelector('[data-nf-tp-root]');
         if (!box) return;
-        $modal.querySelectorAll('.nf-tp-scroll .is-active').forEach((el) => {
+        const preview = box.querySelector('[data-nf-tp-preview]');
+        const okBtn = layer.querySelector('[data-nf-tp-ok]');
+        const cancelBtn = layer.querySelector('[data-nf-tp-cancel]');
+        const back = layer.querySelector('[data-nf-tp-backdrop]');
+        if (!okBtn || !cancelBtn) return;
+
+        box.querySelectorAll('.nf-tp-scroll .is-active').forEach((el) => {
             try {
                 el.scrollIntoView({ block: 'center' });
             } catch (e) {
@@ -187,14 +217,13 @@
         });
 
         function markActive() {
-            $modal.querySelectorAll('[data-nf-h]').forEach((b) => {
+            box.querySelectorAll('[data-nf-h]').forEach((b) => {
                 b.classList.toggle('is-active', parseInt(b.getAttribute('data-nf-h'), 10) === selH);
             });
-            $modal.querySelectorAll('[data-nf-m]').forEach((b) => {
+            box.querySelectorAll('[data-nf-m]').forEach((b) => {
                 b.classList.toggle('is-active', parseInt(b.getAttribute('data-nf-m'), 10) === selM);
             });
-            const pr = $modal.querySelector('#nf-tp-preview');
-            if (pr) pr.textContent = `${pad2(selH)}:${pad2(selM)}`;
+            if (preview) preview.textContent = `${pad2(selH)}:${pad2(selM)}`;
         }
 
         box.addEventListener('click', (e) => {
@@ -209,11 +238,29 @@
                 markActive();
             }
         });
-        $modal.querySelector('#nf-tp-cancel').onclick = closeModal;
-        $modal.querySelector('#nf-tp-ok').onclick = () => {
+
+        const finish = () => {
             onSet(`${pad2(selH)}:${pad2(selM)}`);
-            closeModal();
+            dismissTimePickerLayer(layer);
         };
+        const cancel = () => dismissTimePickerLayer(layer);
+
+        okBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            finish();
+        });
+        cancelBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            cancel();
+        });
+        if (back) {
+            back.addEventListener('click', (e) => {
+                e.preventDefault();
+                cancel();
+            });
+        }
     }
 
     function initTimePickerButtons(root) {
