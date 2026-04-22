@@ -95,7 +95,7 @@
     function timeOptions() {
         const out = [];
         for (let h = 0; h < 24; h++) {
-            for (let m = 0; m < 60; m += 15) {
+            for (let m = 0; m < 60; m += 5) {
                 out.push(`${pad2(h)}:${pad2(m)}`);
             }
         }
@@ -105,8 +105,7 @@
     const TIME_OPTS = timeOptions();
 
     function snapMinute(m) {
-        const q = [0, 15, 30, 45];
-        return q.reduce((best, v) => (Math.abs(v - m) < Math.abs(best - m) ? v : best), 0);
+        return Math.min(55, Math.max(0, Math.round(m / 5) * 5));
     }
 
     function parseTimeParts(s) {
@@ -142,7 +141,7 @@
         const p = parseTimeParts(currentValue);
         let selH = p.h;
         let selM = p.m;
-        const minuteOpts = [0, 15, 30, 45];
+        const minuteOpts = Array.from({ length: 12 }, (_, i) => i * 5);
 
         const hBtns = Array.from({ length: 24 }, (_, hr) => {
             const a = hr === selH ? ' is-active' : '';
@@ -157,7 +156,7 @@
 
         const html = `<div class="nf-tp" id="nf-tp-box">
             <h3 class="nf-tp-title">Set time</h3>
-            <p class="nf-tp-sub">15-minute steps</p>
+            <p class="nf-tp-sub">5-minute steps</p>
             <div class="nf-tp-cols">
                 <div class="nf-tp-col">
                     <div class="nf-tp-lab">Hour</div>
