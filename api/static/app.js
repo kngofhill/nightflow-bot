@@ -76,6 +76,8 @@
         rotatingDemo: false,
         /** Active row from GET /schedules/rotating when user.shift_type === 'rotating' */
         rotatingPattern: null,
+        /** true after "Switch to permanent" until a constant schedule exists (optional UI hint) */
+        finishingConstantSetup: false,
     };
 
     const $root = document.getElementById('screen-root');
@@ -758,27 +760,39 @@
     function renderOnboarding() {
         const type = state.onboardingType || 'constant';
         $root.innerHTML = `
-            <div class="nf-screen nf-center" style="padding-top:24px;">
-                <h1 class="nf-brand">🌙 NIGHTFLOW</h1>
-                <p class="nf-tagline">"Your body's guide through the night"</p>
-                <div class="nf-card nf-select-card">
-                    <div class="nf-select-header">SELECT YOUR SCHEDULE TYPE</div>
-                    <label class="nf-option">
-                        <input type="radio" name="stype" value="constant" ${type === 'constant' ? 'checked' : ''}/>
-                        <div class="nf-option-body">
-                            <strong>PERMANENT NIGHT SHIFT</strong>
-                            <span>Same hours every shift</span>
-                        </div>
-                    </label>
-                    <label class="nf-option">
-                        <input type="radio" name="stype" value="rotating" ${type === 'rotating' ? 'checked' : ''}/>
-                        <div class="nf-option-body">
-                            <strong>ROTATING SCHEDULE</strong>
-                            <span>Shifts change in a pattern</span>
-                        </div>
-                    </label>
+            <div class="nf-onb">
+                <div class="nf-onb-glow" aria-hidden="true"></div>
+                <div class="nf-onb-hero">
+                    <div class="nf-onb-moon" aria-hidden="true">🌙</div>
+                    <h1 class="nf-onb-title">NIGHTFLOW</h1>
+                    <p class="nf-onb-tagline">Your body’s guide through the night</p>
                 </div>
-                <button type="button" class="nf-cta" style="margin-top:20px;" id="btn-onb-continue">CONTINUE</button>
+                <p class="nf-onb-pick">How do you work?</p>
+                <div class="nf-select-card nf-onb-card" role="radiogroup" aria-label="Schedule type">
+                    <div class="nf-onb-choices">
+                        <label class="nf-choice-tile">
+                            <input type="radio" name="stype" value="constant" ${
+                                type === 'constant' ? 'checked' : ''
+                            } />
+                            <span class="nf-choice-ico" aria-hidden="true">⏱</span>
+                            <div class="nf-choice-text">
+                                <span class="nf-choice-title">Permanent</span>
+                                <span class="nf-choice-sub">Fixed hours every shift</span>
+                            </div>
+                        </label>
+                        <label class="nf-choice-tile">
+                            <input type="radio" name="stype" value="rotating" ${
+                                type === 'rotating' ? 'checked' : ''
+                            } />
+                            <span class="nf-choice-ico" aria-hidden="true">🔁</span>
+                            <div class="nf-choice-text">
+                                <span class="nf-choice-title">Rotating</span>
+                                <span class="nf-choice-sub">2-2-3, blocks, or 4-4-4-4</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <button type="button" class="nf-cta nf-onb-cta" id="btn-onb-continue">Continue</button>
             </div>`;
         document.getElementById('btn-onb-continue').onclick = () => {
             const r = document.querySelector('input[name="stype"]:checked');
@@ -788,26 +802,34 @@
     }
 
     function renderSetupPermanent() {
+        const hint = state.finishingConstantSetup
+            ? `<p class="nf-onb-hint">You’re switching to a <strong>fixed</strong> schedule. Set the hours you keep every shift — we’ll rebuild your reminders.</p>`
+            : '';
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="btn-sp-back">← Back</button>
-                    <h1>Set Up Permanent</h1>
+                    <h1>Permanent schedule</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
-                <p class="nf-title">WORK HOURS</p>
+                ${hint}
+                <p class="nf-title">Work hours</p>
                 <div class="nf-card">
                     <div class="nf-row"><span>Start</span>${selectTimeHtml('work_start', '22:00', 'ws')}</div>
                     <div class="nf-row" style="margin-top:10px;"><span>End</span>${selectTimeHtml('work_end', '06:00', 'we')}</div>
                 </div>
-                <p class="nf-title">SLEEP HOURS</p>
+                <p class="nf-title">Sleep hours</p>
                 <div class="nf-card">
                     <div class="nf-row"><span>Start</span>${selectTimeHtml('sleep_start', '08:00', 'ss')}</div>
                     <div class="nf-row" style="margin-top:10px;"><span>End</span>${selectTimeHtml('sleep_end', '16:00', 'se')}</div>
                 </div>
-                <button type="button" class="nf-cta" id="btn-create-const">CREATE SCHEDULE</button>
+                <button type="button" class="nf-cta" id="btn-create-const">Create schedule</button>
             </div>`;
-        document.getElementById('btn-sp-back').onclick = () => go('onboarding', false);
+        document.getElementById('btn-sp-back').onclick = () => {
+            state.finishingConstantSetup = false;
+            if (state.stack && state.stack.length) back();
+            else go('onboarding', false);
+        };
         initTimePickerButtons($root);
         document.getElementById('btn-create-const').onclick = async () => {
             const ws = document.getElementById('ws').value;
@@ -842,7 +864,9 @@
                     $root.innerHTML = `<div class="nf-error">${escapeHtml(err.error || 'Could not save')}</div>`;
                     return;
                 }
+                state.finishingConstantSetup = false;
                 state.rotatingDemo = false;
+                state.rotatingPattern = null;
                 try {
                     localStorage.removeItem('nightflow_rotating_demo');
                 } catch (e) {}
@@ -1692,7 +1716,7 @@
             ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>🌙 NIGHT (template)</h3>
-                        <button type="button" class="nf-link" id="ed-rot-n">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-rot-n">Edit</button>
                     </div>
                     <div class="nf-card">
                         <div>WORK: ${wsnX(nX.work_start)} – ${wsnX(nX.work_end)}</div>
@@ -1704,7 +1728,7 @@
                         ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>☀️ DAY (template)</h3>
-                        <button type="button" class="nf-link" id="ed-rot-d">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-rot-d">Edit</button>
                     </div>
                     <div class="nf-card">
                         <div>WORK: ${wsnX(dX.work_start)} – ${wsnX(dX.work_end)}</div>
@@ -1724,7 +1748,7 @@
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>📅 WORK & SLEEP</h3>
-                        <button type="button" class="nf-link" id="ed-ws">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-ws">Edit</button>
                     </div>
                     <div class="nf-card">
                         <div>WORK: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(formatTime(sched?.work_end))}</div>
@@ -1749,21 +1773,21 @@
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>☕ COFFEE TIMES</h3>
-                        <button type="button" class="nf-link" id="ed-co">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-co">Edit</button>
                     </div>
                     <div class="nf-card">${coffeeSummary(sched)}</div>
                 </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>🍽️ MEAL TIMES</h3>
-                        <button type="button" class="nf-link" id="ed-me">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-me">Edit</button>
                     </div>
                     <div class="nf-card">${mealSummary(sched)}</div>
                 </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
                         <h3>💡 LIGHT REMINDERS</h3>
-                        <button type="button" class="nf-link" id="ed-li">EDIT</button>
+                        <button type="button" class="nf-btn-edit" id="ed-li">Edit</button>
                     </div>
                     <div class="nf-card">${lightSummary(sched)}</div>
                 </div>
@@ -1776,12 +1800,19 @@
                 </div>`;
         const switchToRotatingCard =
             !isRotatingServer() && (state.userRow?.shift_type === 'constant' || !state.userRow?.shift_type)
-                ? `<div class="nf-card" style="margin:12px 0;">
-                        <h3 class="nf-free-h3" style="margin:0 0 8px;">🔄 Rotating schedule</h3>
-                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Switch to a 2-2-3, block, or 4-4-4-4 style pattern. Your constant template will be turned off in favor of the new pattern.</p>
-                        <button type="button" class="nf-cta-secondary" id="btn-switch-rot" style="width:100%;">Switch to rotating schedule</button>
+                ? `<div class="nf-card nf-settings-action-card">
+                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Rotating schedule</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Use 2-2-3, block rotation, or 4-4-4-4. Your current fixed hours will be replaced by a pattern you choose next.</p>
+                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-switch-rot">Switch to rotating</button>
                    </div>`
                 : '';
+        const switchToPermanentCard = isRotatingServer()
+            ? `<div class="nf-card nf-settings-action-card">
+                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Permanent schedule</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Use the same work and sleep hours on every work day. Your rotating pattern will be turned off — you’ll set a new fixed schedule on the next screen.</p>
+                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-switch-const">Switch to permanent</button>
+                   </div>`
+            : '';
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
@@ -1794,6 +1825,7 @@
                 ${workSleepBlock}
                 ${planWindowsBlock}
                 ${switchToRotatingCard}
+                ${switchToPermanentCard}
                 <p class="nf-field-label">⏰ NOTIFICATIONS</p>
                 <div class="nf-card">
                     ${toggleRow('🔔 All Notifications', 'notifAll', s.notifAll)}
@@ -1832,6 +1864,47 @@
         const bsr = document.getElementById('btn-switch-rot');
         if (bsr) {
             bsr.onclick = () => go('setup_rot', true);
+        }
+        const bsc = document.getElementById('btn-switch-const');
+        if (bsc) {
+            bsc.onclick = async () => {
+                if (
+                    !window.confirm(
+                        'Switch to a permanent (fixed) schedule? Your rotating pattern will be turned off. You can set your work and sleep times on the next screen.'
+                    )
+                ) {
+                    return;
+                }
+                renderLoading();
+                try {
+                    const res = await api(`/schedules/switch-to-constant?telegram_id=${user.id}`, {
+                        method: 'POST',
+                        json: {},
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        tg.showAlert(data.error || 'Could not switch. You need an active Pro subscription.');
+                        state.screen = 'settings';
+                        state.stack = ['dashboard'];
+                        render();
+                        return;
+                    }
+                    if (state.userRow) {
+                        state.userRow = { ...state.userRow, shift_type: 'constant' };
+                    }
+                    state.rotatingPattern = null;
+                    state.finishingConstantSetup = true;
+                    state.screen = 'setup_perm';
+                    state.stack = ['settings'];
+                    render();
+                } catch (e) {
+                    console.error(e);
+                    tg.showAlert('Request failed');
+                    state.screen = 'settings';
+                    state.stack = ['dashboard'];
+                    render();
+                }
+            };
         }
         if (isRotatingServer()) {
             const ern = document.getElementById('ed-rot-n');
@@ -2818,7 +2891,13 @@
             }
             if (!res.ok) {
                 state.schedule = null;
-                state.screen = 'onboarding';
+                const st = state.userRow && state.userRow.shift_type;
+                if (st === 'constant') {
+                    state.finishingConstantSetup = true;
+                    state.screen = 'setup_perm';
+                } else {
+                    state.screen = 'onboarding';
+                }
                 render();
                 return;
             }
@@ -2834,10 +2913,18 @@
             }
         } catch (e) {
             state.schedule = null;
-            state.screen = 'onboarding';
+            const st2 = state.userRow && state.userRow.shift_type;
+            if (st2 === 'constant') {
+                state.finishingConstantSetup = true;
+                state.screen = 'setup_perm';
+            } else {
+                state.screen = 'onboarding';
+            }
             render();
             return;
         }
+
+        state.finishingConstantSetup = false;
 
         try {
             if (localStorage.getItem('nightflow_rotating_demo') === '1') state.rotatingDemo = true;

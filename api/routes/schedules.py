@@ -277,6 +277,22 @@ def patch_rotating():
     return jsonify(r2.data[0] if r2.data else row)
 
 
+@bp.route("/switch-to-constant", methods=["POST"])
+def switch_to_constant():
+    """End rotating mode: deactivate rotating pattern and set user to permanent (constant) schedule. User must then create a constant schedule."""
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+    supabase_client.table("rotating_patterns").update({"active": False}).eq("user_id", user_id).eq(
+        "active", True
+    ).execute()
+    supabase_client.table("users").update({"shift_type": "constant"}).eq("id", user_id).execute()
+    return jsonify({"ok": True, "shift_type": "constant"})
+
+
 @bp.route("/constant", methods=["GET"])
 def get_constant():
     user_id, err = get_user_from_request()
