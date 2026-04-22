@@ -634,7 +634,8 @@
                     <p class="nf-muted nf-center" style="margin:0;">No work scheduled today. Rest up.</p>
                 </div>`;
         } else {
-            const stars = state.userRow?.pro_price_stars ?? 50;
+            // TESTING ONLY — revert ?? fallback to 50 before production
+            const stars = state.userRow?.pro_price_stars ?? 1;
             const subBanner = !hasProEntitlement()
                 ? `<div class="nf-pro-banner">
                     <div>

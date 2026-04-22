@@ -29,6 +29,9 @@ from shared.subscription import (
     PRO_PRICE_STARS,
     SUBSCRIPTION_PERIOD_SECONDS,
     has_pro_entitlement,
+    paid_pro_period_active,
+    within_refund_window,
+    subscription_debug_summary,
 )
 from shared.time_utils import (
     get_user_now_from_timezone_name,
@@ -56,10 +59,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
         f"Use the menu button below ⬇️ to open the app.\n\n"
-        f"🎁 New accounts get a 14-day Pro trial (full features).\n"
+        # TESTING ONLY — revert welcome copy before production (was 14-day trial, 50 Stars).
+        f"🎁 New accounts get a short Pro trial (TESTING: ~5 minutes, full features).\n"
         f"After that, stay on Free (today’s basics) or subscribe with {PRO_PRICE_STARS} Stars / 30 days via /subscribe.\n\n"
         f"Commands:\n"
         f"/subscribe — Nightflow Pro (Telegram Stars)\n"
+        f"/status — Trial / Pro debug (TESTING)\n"
+        f"/refund — Revoke paid Pro in test mode (within 3 days of purchase)\n"
         f"/pause — Pause notifications (Pro)\n"
         f"/resume — Resume notifications"
     )
@@ -84,7 +90,8 @@ class RefundedPaymentFilter(filters.BaseFilter):
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Telegram Stars invoice for Nightflow Pro (50 XTR). Tries recurring; falls back to one-time if API rejects."""
+    """Send Telegram Stars invoice for Nightflow Pro (XTR). Tries recurring; falls back to one-time if API rejects."""
+    # TESTING ONLY: price is PRO_PRICE_STARS (1 Star); production was 50.
     chat_id = update.effective_chat.id
     prices = [LabeledPrice("Nightflow Pro", PRO_PRICE_STARS)]
     desc = (
@@ -128,6 +135,36 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
     exp = sp.subscription_expiration_date
     apply_pro_subscription_from_payment(tid, exp)
     await update.message.reply_text("Nightflow Pro is now active. Open the mini-app to use every feature.")
+
+
+async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """# TESTING ONLY — simulate refund: revoke paid Pro (same as Telegram refunded_payment)."""
+    tid = update.effective_user.id
+    row = get_user_by_telegram_id(tid)
+    if not paid_pro_period_active(row):
+        await update.message.reply_text(
+            "No active paid Nightflow Pro subscription to refund. "
+            "(Trial-only users are not charged; there is nothing to refund.)"
+        )
+        return
+    if not within_refund_window(row):
+        await update.message.reply_text(
+            "Refunds are only allowed within the first 3 days after purchase."
+        )
+        return
+    revoke_pro_subscription(tid)
+    await update.message.reply_text("Your subscription has been refunded (test mode).")
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """# TESTING ONLY — show trial / paid Pro timestamps for debugging."""
+    tid = update.effective_user.id
+    row = get_user_by_telegram_id(tid)
+    if not row:
+        upsert_user(tid, update.effective_user.username or "", update.effective_user.first_name or "", None)
+        row = get_user_by_telegram_id(tid)
+    text = subscription_debug_summary(row)
+    await update.message.reply_text(text)
 
 
 async def on_refunded_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,6 +313,8 @@ def main():
     application.add_handler(CommandHandler("pause", pause))
     application.add_handler(CommandHandler("resume", resume))
     application.add_handler(CommandHandler("subscribe", subscribe))
+    application.add_handler(CommandHandler("refund", cmd_refund))
+    application.add_handler(CommandHandler("status", cmd_status))
     application.add_handler(PreCheckoutQueryHandler(precheckout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment))
     application.add_handler(MessageHandler(RefundedPaymentFilter(), on_refunded_payment))
