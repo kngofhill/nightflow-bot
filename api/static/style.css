@@ -206,6 +206,43 @@ body {
 }
 
 /* Next */
+.nf-next-chip {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(64, 167, 227, 0.2);
+    color: var(--tg-theme-button-color, var(--nf-primary));
+}
+
+.nf-next-card--work .nf-next-chip {
+    background: rgba(92, 107, 200, 0.3);
+    color: #9fa8da;
+}
+.nf-next-card--sleep .nf-next-chip {
+    background: rgba(30, 58, 95, 0.4);
+    color: #90caf9;
+}
+.nf-next-card--coffee .nf-next-chip {
+    background: rgba(109, 76, 65, 0.35);
+    color: #d7ccc8;
+}
+.nf-next-card--meal .nf-next-chip {
+    background: rgba(46, 125, 50, 0.3);
+    color: #a5d6a7;
+}
+.nf-next-card--light .nf-next-chip {
+    background: rgba(255, 213, 79, 0.2);
+    color: #fff9c4;
+}
+.nf-next-card--other .nf-next-chip {
+    background: var(--nf-primary-dim);
+    color: var(--nf-primary);
+}
+
 .nf-next-card {
     background: linear-gradient(135deg, rgba(64,167,227,0.25), rgba(64,167,227,0.08));
     border: 1px solid rgba(64,167,227,0.35);
@@ -716,6 +753,40 @@ body {
 .nf-settings-action-card .nf-cta-secondary {
     margin-top: 0;
 }
+
+.nf-rot-win-head {
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+    color: var(--nf-text);
+}
+
+.nf-rot-win-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.nf-rot-win-k {
+    font-size: 0.88rem;
+}
+
+.nf-evt-coffee { color: #bcaaa4; font-weight: 700; margin-right: 4px; }
+.nf-evt-meal { color: #81c784; font-weight: 700; margin-right: 4px; }
+.nf-evt-light { color: #fff59d; font-weight: 700; margin-right: 4px; }
+
+.nf-tl-item {
+    border-left: 3px solid transparent;
+    padding-left: 4px;
+    margin-left: 2px;
+}
+.nf-tl--wstart, .nf-tl--wend { border-left-color: #5c6bc0; }
+.nf-tl--sleepin, .nf-tl--wake { border-left-color: #4fc3f7; }
+.nf-tl--coffee { border-left-color: #8d6e63; }
+.nf-tl--meal { border-left-color: #43a047; }
+.nf-tl--light { border-left-color: #ffca28; }
 
 .nf-toggle-row {
     display: flex;
@@ -1639,14 +1710,130 @@ ul.nf-tl.nf-timeline {
 .nf-tl-line {
     display: flex;
     align-items: center;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--tg-theme-text-color, var(--nf-text));
 }
 
+.nf-tl-kind {
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    min-width: 3.2rem;
+}
+
+.nf-tl--wstart .nf-tl-kind,
+.nf-tl--wend .nf-tl-kind {
+    color: #9fa8da;
+}
+.nf-tl--sleepin .nf-tl-kind,
+.nf-tl--wake .nf-tl-kind {
+    color: #90caf9;
+}
+.nf-tl--coffee .nf-tl-kind {
+    color: #bcaaa4;
+}
+.nf-tl--meal .nf-tl-kind {
+    color: #a5d6a7;
+}
+.nf-tl--light .nf-tl-kind {
+    color: #fff9c4;
+}
+
 .nf-tl-ico {
     font-size: 1.15rem;
+}
+
+.nf-full-range {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 14px;
+    padding: 0 2px;
+}
+
+.nf-full-range-lab {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+
+.nf-chip-range {
+    border: 1px solid var(--tg-theme-button-color, var(--nf-primary));
+    background: transparent;
+    color: var(--tg-theme-button-color, var(--nf-primary));
+    font-weight: 700;
+    font-size: 0.82rem;
+    padding: 8px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    min-height: 40px;
+}
+
+.nf-chip-range.is-active {
+    background: var(--tg-theme-button-color, var(--nf-primary));
+    color: var(--tg-theme-button-text-color, #fff);
+}
+
+.nf-day-block {
+    margin-bottom: 18px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nf-day-block:last-of-type {
+    border-bottom: none;
+}
+
+.nf-day-head {
+    margin: 0 0 4px;
+    font-size: 0.95rem;
+    line-height: 1.35;
+}
+
+.nf-day-meta {
+    font-size: 0.8rem;
+    margin: 0 0 6px;
+}
+
+.nf-tr-pill {
+    display: inline-block;
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    padding: 2px 7px;
+    border-radius: 6px;
+    margin-right: 4px;
+    vertical-align: middle;
+    color: #ffecb3;
+    background: rgba(255, 152, 0, 0.2);
+    border: 1px solid rgba(255, 193, 7, 0.4);
+}
+
+.nf-day-locked {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(100, 181, 246, 0.12);
+    border: 1px solid rgba(100, 181, 246, 0.25);
+}
+
+.nf-day-advice {
+    font-size: 0.86rem;
+    line-height: 1.4;
+    margin: 0 0 6px;
+}
+
+.nf-wellness-hint {
+    margin: 0 0 8px;
 }
 
 /* —— Weekly: donuts + trends —— */

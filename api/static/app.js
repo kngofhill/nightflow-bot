@@ -78,7 +78,16 @@
         rotatingPattern: null,
         /** true after "Switch to permanent" until a constant schedule exists (optional UI hint) */
         finishingConstantSetup: false,
+        /** set when opening onboarding from settings / rebuild — shows Back to settings */
+        onboardingFromSettings: false,
+        /** 1, 3, or 7 — full schedule range (Pro) */
+        fullScheduleRange: 1,
     };
+
+    try {
+        const _r = localStorage.getItem('nf_full_range');
+        if (_r === '1' || _r === '3' || _r === '7') state.fullScheduleRange = parseInt(_r, 10);
+    } catch (e) {}
 
     const $root = document.getElementById('screen-root');
     const $modal = document.getElementById('modal-root');
@@ -426,6 +435,12 @@
         return state.userRow?.shift_type === 'rotating';
     }
 
+    function goToScheduleTypePicker() {
+        state.onboardingFromSettings = true;
+        const from = state.screen || 'dashboard';
+        go('onboarding', from === 'onboarding' ? false : true);
+    }
+
     function rotatingShiftsObj() {
         const sh = state.rotatingPattern && state.rotatingPattern.shifts;
         return sh && typeof sh === 'object' ? sh : {};
@@ -501,7 +516,13 @@
 
     function getNextCoreEvent(sched) {
         if (!sched || !sched.work_start) {
-            return { line: '⏰ Add your work hours', sub: 'Open Settings when you have Pro to edit', icon: '⏰' };
+            return {
+                line: '⏰ Add your work hours',
+                sub: 'Open Settings when you have Pro to edit',
+                icon: '⏰',
+                kindClass: 'other',
+                kindLabel: 'Setup',
+            };
         }
         const now = new Date();
         const candidates = [];
@@ -517,7 +538,13 @@
         add(sched.sleep_start, 'Bedtime', '😴');
         add(sched.sleep_end, 'Wake', '☀️');
         if (!candidates.length) {
-            return { line: '⏰ Next on your schedule', sub: '—', icon: '⏰' };
+            return {
+                line: '⏰ Next on your schedule',
+                sub: '—',
+                icon: '⏰',
+                kindClass: 'other',
+                kindLabel: 'Schedule',
+            };
         }
         candidates.sort((a, b) => a.at - b.at);
         const next = candidates[0];
@@ -525,10 +552,18 @@
         const h = Math.floor(Math.max(0, bestDelta) / 60);
         const m = Math.round(Math.max(0, bestDelta) % 60);
         const shortLabel = (next.label || '').split('.')[0];
+        let kc = 'work';
+        if (next.label && String(next.label).toLowerCase().indexOf('bedtime') >= 0) kc = 'sleep';
+        if (next.label && String(next.label).toLowerCase().indexOf('wake') >= 0) kc = 'sleep';
+        if (next.label && String(next.label).toLowerCase().indexOf('shift end') >= 0) kc = 'work';
+        if (next.label && String(next.label).toLowerCase().indexOf('shift start') >= 0) kc = 'work';
+        const kl = kc === 'sleep' ? 'Sleep' : 'Work';
         return {
-            line: `${next.icon} ${shortLabel} · ${next.time}`,
+            line: `${kl} — ${next.icon} ${shortLabel} · ${next.time}`,
             sub: `in ${h}h ${m}m`,
             icon: next.icon,
+            kindClass: kc,
+            kindLabel: kl,
         };
     }
 
@@ -623,13 +658,53 @@
         }
     }
 
+    function eventKindToCategory(kind) {
+        if (kind === 'work_start' || kind === 'work_end') return 'work';
+        if (kind === 'sleep_start' || kind === 'sleep_end') return 'sleep';
+        if (kind === 'meal') return 'meal';
+        if (kind === 'coffee') return 'coffee';
+        if (kind === 'light') return 'light';
+        return 'other';
+    }
+
+    function eventTypeTag(kind) {
+        if (kind === 'work_start' || kind === 'work_end') return 'WORK';
+        if (kind === 'sleep_start' || kind === 'sleep_end') return 'SLEEP';
+        if (kind === 'meal') return 'MEAL';
+        if (kind === 'coffee') return 'COFFEE';
+        if (kind === 'light') return 'LIGHT';
+        return 'EVENT';
+    }
+
+    function normalizeScheduleFields(row) {
+        if (!row) return null;
+        const o = { ...row };
+        for (const f of ['coffee_windows', 'meal_windows', 'brightness_windows']) {
+            if (typeof o[f] === 'string') {
+                try {
+                    o[f] = JSON.parse(o[f]);
+                } catch (e) {
+                    o[f] = [];
+                }
+            }
+            if (!Array.isArray(o[f])) o[f] = [];
+        }
+        return o;
+    }
+
     function getNextEvent(schedule) {
         if (!hasProEntitlement()) {
             return getNextCoreEvent(schedule);
         }
         const raw = collectEvents(schedule);
         if (!raw.length) {
-            return { line: '⏰ No upcoming reminders', sub: 'Add times in Settings', icon: '⏰' };
+            return {
+                line: '⏰ No upcoming reminders',
+                sub: 'Add times in Settings',
+                icon: '⏰',
+                kindClass: 'other',
+                kindLabel: 'Reminder',
+            };
         }
         const now = new Date();
         const cur = now.getHours() * 60 + now.getMinutes();
@@ -647,10 +722,25 @@
         const h = Math.floor(bestDelta / 60);
         const m = Math.round(bestDelta % 60);
         const shortLabel = (next.label || '').split('.')[0];
+        const cat = eventKindToCategory(next.kind);
+        const kLabel =
+            cat === 'work'
+                ? 'Work'
+                : cat === 'sleep'
+                  ? 'Sleep'
+                  : cat === 'meal'
+                    ? 'Meal'
+                    : cat === 'coffee'
+                      ? 'Coffee'
+                      : cat === 'light'
+                        ? 'Light'
+                        : 'Event';
         return {
-            line: `${next.icon} ${shortLabel} · ${next.time}`,
+            line: `${kLabel} — ${next.icon} ${shortLabel} · ${next.time}`,
             sub: `in ${h}h ${m}m`,
             icon: next.icon,
+            kindClass: cat,
+            kindLabel: kLabel,
         };
     }
 
@@ -759,9 +849,17 @@
 
     function renderOnboarding() {
         const type = state.onboardingType || 'constant';
+        const topFromSettings = state.onboardingFromSettings
+            ? `<div class="nf-topbar" style="margin:0 0 12px;">
+                <button type="button" class="nf-back" id="onb-back">← Back</button>
+                <h1 class="nf-onb-top-title">Change schedule</h1>
+                <span></span>
+            </div>`
+            : '';
         $root.innerHTML = `
             <div class="nf-onb">
                 <div class="nf-onb-glow" aria-hidden="true"></div>
+                ${topFromSettings}
                 <div class="nf-onb-hero">
                     <div class="nf-onb-moon" aria-hidden="true">🌙</div>
                     <h1 class="nf-onb-title">NIGHTFLOW</h1>
@@ -794,10 +892,20 @@
                 </div>
                 <button type="button" class="nf-cta nf-onb-cta" id="btn-onb-continue">Continue</button>
             </div>`;
+        const bback = document.getElementById('onb-back');
+        if (bback) {
+            bback.onclick = () => {
+                state.onboardingFromSettings = false;
+                if (state.stack && state.stack.length) back();
+                else go('settings', false);
+            };
+        }
         document.getElementById('btn-onb-continue').onclick = () => {
             const r = document.querySelector('input[name="stype"]:checked');
             state.onboardingType = r ? r.value : 'constant';
-            go(state.onboardingType === 'constant' ? 'setup_perm' : 'setup_rot', false);
+            const fromSet = state.onboardingFromSettings;
+            state.onboardingFromSettings = false;
+            go(state.onboardingType === 'constant' ? 'setup_perm' : 'setup_rot', fromSet);
         };
     }
 
@@ -1180,8 +1288,12 @@
                     <div class="nf-bar-row"><span class="nf-bar-label">Work</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.work_start))}</span><span>${escapeHtml(formatTime(sched.work_end))}</span></div><div class="nf-bar-track"></div></div></div>
                     <div class="nf-bar-row"><span class="nf-bar-label">Sleep</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.sleep_start))}</span><span>${escapeHtml(formatTime(sched.sleep_end))}</span></div><div class="nf-bar-track"></div></div></div>
                 </div>
-                <div class="nf-card nf-next-card">
-                    <div class="nf-next-label">⏰ Next</div>
+                <div class="nf-card nf-next-card nf-next-card--${escapeHtml(
+                    (next && next.kindClass) || 'other'
+                )}">
+                    <div class="nf-next-label"><span class="nf-next-chip">${escapeHtml(
+                        (next && next.kindLabel) || 'Next'
+                    )}</span> · Up next</div>
                     <div class="nf-next-main">${escapeHtml(next.line)}</div>
                     <div class="nf-next-sub">${escapeHtml(next.sub)}</div>
                 </div>`;
@@ -1255,20 +1367,9 @@
         return String(t);
     }
 
-    function renderFullSchedule() {
-        const sched = state.schedule;
-        if (!sched || sched.shift_type === 'off') {
-            $root.innerHTML = `
-                <div class="nf-screen"><div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bf">← BACK</button>
-                    <h1>Full Schedule</h1>
-                    <span></span>
-                </div><p class="nf-muted">No events today.</p></div>`;
-            document.getElementById('bf').onclick = back;
-            return;
-        }
-
-        const events = collectEvents(sched);
+    function buildTimelineListHtml(sched) {
+        const s = normalizeScheduleFields(sched) || sched;
+        const events = collectEvents(s);
         const kc = (k) =>
             ({
                 work_start: 'nf-tl--wstart',
@@ -1280,14 +1381,16 @@
                 light: 'nf-tl--light',
                 other: 'nf-tl--other',
             }[k] || 'nf-tl--other');
-        const lines = events
+        return events
             .map((e) => {
                 const cls = kc(e.kind);
+                const tag = eventTypeTag(e.kind);
                 return `<li class="nf-tl-item ${cls}">
                     <span class="nf-tl-dot" aria-hidden="true"></span>
                     <div class="nf-tl-body">
                         <span class="nf-tl-time">${escapeHtml(e.time)}</span>
                         <div class="nf-tl-line">
+                            <span class="nf-tl-kind">${escapeHtml(tag)}</span>
                             <span class="nf-tl-ico" aria-hidden="true">${escapeHtml(e.icon)}</span>
                             <span class="nf-tl-text">${escapeHtml(e.label)}</span>
                         </div>
@@ -1295,31 +1398,197 @@
                 </li>`;
             })
             .join('');
+    }
 
-        const hasWE =
-            events.some((x) => x.kind === 'work_end') && events.some((x) => x.kind === 'sleep_start');
-        const bridge =
-            hasWE
-                ? '<p class="nf-tl-bridge">Wind down from work into sleep — your recovery window is below.</p>'
+    function daySectionHtml(dayRow, isMulti) {
+        const sched = normalizeScheduleFields(dayRow) || dayRow;
+        if (!sched || sched.shift_type === 'off') {
+            const dlabel = sched && sched.date ? String(sched.date) : '';
+            const dPretty = dlabel
+                ? new Date(dlabel + 'T12:00:00').toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                  })
+                : new Date().toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                  });
+            return `<div class="nf-day-block">
+                <p class="nf-day-head">${escapeHtml(dPretty)} · <strong>OFF</strong></p>
+                <p class="nf-muted" style="margin:4px 0 0;">${
+                    sched && sched.transition_advice ? escapeHtml(sched.transition_advice) : 'Rest and recovery.'
+                }</p>
+            </div>`;
+        }
+
+        const dStr = sched.date
+            ? new Date(String(sched.date) + 'T12:00:00').toLocaleDateString(undefined, {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+              })
+            : new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const stu = (sched.shift_type || '').toUpperCase();
+        const trBadge =
+            sched.is_transition_day === true
+                ? '<span class="nf-tr-pill" title="System-managed reminders">TRANSITION</span> '
                 : '';
+        const evs = collectEvents(sched);
+        const hasBridge =
+            evs.some((x) => x.kind === 'work_end') && evs.some((x) => x.kind === 'sleep_start');
+        const lines = buildTimelineListHtml(sched);
+        const bridge = hasBridge
+            ? '<p class="nf-tl-bridge">Wind down from work into sleep — your recovery window is below.</p>'
+            : '';
+        const advice = sched.transition_advice
+            ? `<p class="nf-day-advice nf-muted">${escapeHtml(sched.transition_advice)}</p>`
+            : '';
+        const locked = sched.reminders_locked
+            ? `<p class="nf-day-locked">${escapeHtml(String(sched.reminders_locked))}</p>`
+            : '';
+        const well =
+            !sched.is_transition_day && Array.isArray(sched.wellness_suggestions) && sched.wellness_suggestions.length
+                ? `<div class="nf-wellness-hint">
+                    <div class="nf-card-label" style="margin:0 0 6px;">Tips (optional)</div>
+                    ${sched.wellness_suggestions
+                        .map(
+                            (x) => `<p class="nf-muted" style="margin:0 0 4px 0;">${escapeHtml(x)}</p>`
+                        )
+                        .join('')}
+                </div>`
+                : '';
+        return `<div class="nf-day-block">
+            <p class="nf-day-head">${trBadge}${escapeHtml(dStr)} · <strong>${escapeHtml(stu)}</strong></p>
+            ${
+                isMulti && (sched.pattern_id || sched.pattern_slot)
+                    ? `<p class="nf-day-meta nf-muted">${
+                          sched.pattern_slot
+                              ? escapeHtml(String(sched.pattern_slot)) +
+                                (sched.pattern_id ? ' · ' + escapeHtml(String(sched.pattern_id).replace(/_/g, ' ')) : '')
+                              : sched.pattern_id
+                                ? escapeHtml(String(sched.pattern_id).replace(/_/g, ' '))
+                                : ''
+                      }</p>`
+                    : ''
+            }
+            ${advice}
+            ${locked}
+            ${well}
+            ${bridge}
+            <ul class="nf-tl nf-timeline">${lines}</ul>
+        </div>`;
+    }
 
-        $root.innerHTML = `
+    function renderFullSchedule() {
+        $root.innerHTML = '<div class="nf-loading">Loading…</div>';
+
+        (async () => {
+            const n = hasProEntitlement() ? (state.fullScheduleRange || 1) : 1;
+            let days = [];
+            let trRem = true;
+            let trLead = '3';
+
+            if (hasProEntitlement()) {
+                try {
+                    const res = await api(
+                        `/schedules/preview?days=${n}&telegram_id=${encodeURIComponent(user.id)}`
+                    );
+                    if (res.ok) {
+                        const data = await res.json();
+                        days = data.days || [];
+                        if (data.transitionReminders != null) trRem = Boolean(data.transitionReminders);
+                        if (data.transitionLeadDays != null) trLead = String(data.transitionLeadDays);
+                    }
+                } catch (e) {
+                    console.warn('schedule preview', e);
+                }
+            }
+
+            if (!days.length) {
+                const s = normalizeScheduleFields(state.schedule);
+                if (s && s.shift_type && s.shift_type !== 'off') {
+                    if (!s.date) {
+                        try {
+                            s.date = new Date().toISOString().slice(0, 10);
+                        } catch (e) {}
+                    }
+                    days = [s];
+                } else {
+                    $root.innerHTML = `
+                <div class="nf-screen"><div class="nf-topbar">
+                    <button type="button" class="nf-back" id="bf">← BACK</button>
+                    <h1>Full Schedule</h1>
+                    <span></span>
+                </div><p class="nf-muted">No events for this view.</p>
+                <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
+                </div>`;
+                    document.getElementById('bf').onclick = back;
+                    const b0 = document.getElementById('bfd');
+                    if (b0) b0.onclick = back;
+                    return;
+                }
+            }
+
+            const multi = hasProEntitlement() && n > 1;
+            const rangeBlock = hasProEntitlement()
+                ? `<div class="nf-full-range" role="group" aria-label="Date range">
+                    <span class="nf-full-range-lab">Show</span>
+                    <button type="button" class="nf-chip-range${
+                        n === 1 ? ' is-active' : ''
+                    }" data-range="1" aria-pressed="${n === 1}">Today</button>
+                    <button type="button" class="nf-chip-range${
+                        n === 3 ? ' is-active' : ''
+                    }" data-range="3" aria-pressed="${n === 3}">3 days</button>
+                    <button type="button" class="nf-chip-range${
+                        n === 7 ? ' is-active' : ''
+                    }" data-range="7" aria-pressed="${n === 7}">7 days</button>
+                </div>`
+                : '';
+            const foot =
+                isRotatingUi() && hasProEntitlement()
+                    ? `<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">Transition: reminders ${
+                          trRem ? 'on' : 'off'
+                      }, starting ${escapeHtml(trLead)} day${
+                          String(trLead) === '1' ? '' : 's'
+                      } before a switch. Adjust in Settings if needed — days marked TRANSITION use the system plan for coffee, meals, and light.</p>`
+                    : '<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">Types: work, sleep, coffee, meal, light — labels on the left match each row.</p>';
+
+            const dayBlocks = (days || [])
+                .map((d) => daySectionHtml(d, multi))
+                .join('');
+
+            $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="bf">← BACK</button>
                     <h1>Full Schedule</h1>
                     <span></span>
                 </div>
-                <p class="nf-muted" style="margin-top:0;">TODAY · ${escapeHtml(
-                    new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-                )} · ${escapeHtml((sched.shift_type || '').toUpperCase())}</p>
-                ${bridge}
-                <ul class="nf-tl nf-timeline">${lines}</ul>
-                <p class="nf-muted nf-schedule-foot">Chronological order for your shift. Colors: work, sleep, coffee, meals, light.</p>
+                ${rangeBlock}
+                <div class="nf-full-days">${dayBlocks}</div>
+                ${foot}
                 <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
             </div>`;
-        document.getElementById('bf').onclick = back;
-        document.getElementById('bfd').onclick = back;
+
+            document.getElementById('bf').onclick = back;
+            document.getElementById('bfd').onclick = back;
+            if (hasProEntitlement()) {
+                $root.querySelectorAll('.nf-chip-range').forEach((b) => {
+                    b.addEventListener('click', () => {
+                        const r = Number(b.getAttribute('data-range'));
+                        if (r === 1 || r === 3 || r === 7) {
+                            state.fullScheduleRange = r;
+                            try {
+                                localStorage.setItem('nf_full_range', String(r));
+                            } catch (e) {}
+                            render();
+                        }
+                    });
+                });
+            }
+        })();
     }
 
     function renderSuggestions() {
@@ -1437,11 +1706,33 @@
 
         (async () => {
             let w = mockWeekly();
+            let wellness = [];
             try {
                 const res = await api(`/reports/weekly?telegram_id=${user.id}`);
                 if (res.ok) w = await res.json();
             } catch (e) {
                 console.warn('weekly fetch failed', e);
+            }
+            if (hasProEntitlement()) {
+                try {
+                    const pr = await api(
+                        `/schedules/preview?days=7&telegram_id=${encodeURIComponent(user.id)}`
+                    );
+                    if (pr.ok) {
+                        const pd = await pr.json();
+                        const seen = new Set();
+                        (pd.days || []).forEach((d) => {
+                            (d.wellness_suggestions || []).forEach((s) => {
+                                if (s && !seen.has(s)) {
+                                    seen.add(s);
+                                    wellness.push(s);
+                                }
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.warn('weekly wellness preview', e);
+                }
             }
 
             const hasData =
@@ -1537,6 +1828,19 @@
                         hasData
                             ? ''
                             : '<p class="nf-muted" style="text-align:center;padding:4px 8px 12px;">Log end-of-shift check-ins to build your week-over-week trends here.</p>'
+                    }
+                    ${
+                        wellness.length
+                            ? `<div class="nf-card nf-week-wellness" style="margin-top:8px;">
+                        <p class="nf-card-label" style="margin:0 0 8px;">Gentle tips (this week)</p>
+                        <p class="nf-muted" style="font-size:0.8rem;margin:0 0 6px;">Based on your saved coffee, meal, and light times — not rules. Transition days are handled separately in Full schedule.</p>
+                        <ul class="nf-wellness-list" style="margin:0;padding-left:1.1em;">
+                        ${wellness
+                            .map((s) => `<li class="nf-muted" style="margin:4px 0;">${escapeHtml(s)}</li>`)
+                            .join('')}
+                        </ul>
+                    </div>`
+                            : ''
                     }
                     <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug" style="margin-top:8px;">VIEW SUGGESTIONS</button>
                 </div>`;
@@ -1760,14 +2064,50 @@
         const planWindowsBlock = isRotatingServer()
             ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>☕·🍽·💡 TODAY (from pattern)</h3>
-                        <span class="nf-muted" style="font-size:0.8rem;">Auto</span>
+                        <h3>Reminders (templates)</h3>
                     </div>
+                    <p class="nf-muted" style="font-size:0.84rem;margin:0 0 10px;line-height:1.4;">
+                        Edit <strong>night</strong> and <strong>day</strong> templates. On <strong>transition</strong> days, Nightflow may use a fixed plan for coffee, meals, and light so your sleep plan stays on track. Other days: optional wellness tips in Weekly.
+                    </p>
                     <div class="nf-card">
-                        <div class="nf-muted" style="margin-bottom:6px;">Coffee, meals, and light are computed for <strong>today’s</strong> slot from your work/sleep template.</div>
-                        <div><strong>☕</strong> ${coffeeSummary(sched)}</div>
-                        <div style="margin-top:6px;"><strong>🍽</strong> ${mealSummary(sched)}</div>
-                        <div style="margin-top:6px;"><strong>💡</strong> ${lightSummary(sched)}</div>
+                        <div class="nf-rot-win-head">🌙 Night shift</div>
+                        <div class="nf-rot-win-row">
+                            <span class="nf-rot-win-k">☕ Coffee</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-co">Edit</button>
+                        </div>
+                        <div class="nf-rot-win-row">
+                            <span class="nf-rot-win-k">🍽 Meals</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-me">Edit</button>
+                        </div>
+                        <div class="nf-rot-win-row" style="margin-bottom:0;">
+                            <span class="nf-rot-win-k">💡 Light</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-li">Edit</button>
+                        </div>
+                    </div>
+                    ${
+                        patternHasDayWork()
+                            ? `<div class="nf-card" style="margin-top:10px;">
+                        <div class="nf-rot-win-head">☀️ Day shift</div>
+                        <div class="nf-rot-win-row">
+                            <span class="nf-rot-win-k">☕ Coffee</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-co">Edit</button>
+                        </div>
+                        <div class="nf-rot-win-row">
+                            <span class="nf-rot-win-k">🍽 Meals</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-me">Edit</button>
+                        </div>
+                        <div class="nf-rot-win-row" style="margin-bottom:0;">
+                            <span class="nf-rot-win-k">💡 Light</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-li">Edit</button>
+                        </div>
+                    </div>`
+                            : ''
+                    }
+                    <div class="nf-card" style="margin-top:10px;">
+                        <div class="nf-muted" style="margin-bottom:6px;">Today’s preview (computed)</div>
+                        <div><span class="nf-evt-coffee">☕</span> ${coffeeSummary(sched)}</div>
+                        <div style="margin-top:6px;"><span class="nf-evt-meal">🍽</span> ${mealSummary(sched)}</div>
+                        <div style="margin-top:6px;"><span class="nf-evt-light">💡</span> ${lightSummary(sched)}</div>
                     </div>
                 </div>`
             : `<div class="nf-setting-block">
@@ -1863,54 +2203,27 @@
         if (btnStars) btnStars.onclick = () => openProInvoice();
         const bsr = document.getElementById('btn-switch-rot');
         if (bsr) {
-            bsr.onclick = () => go('setup_rot', true);
+            bsr.onclick = () => goToScheduleTypePicker();
         }
         const bsc = document.getElementById('btn-switch-const');
         if (bsc) {
-            bsc.onclick = async () => {
-                if (
-                    !window.confirm(
-                        'Switch to a permanent (fixed) schedule? Your rotating pattern will be turned off. You can set your work and sleep times on the next screen.'
-                    )
-                ) {
-                    return;
-                }
-                renderLoading();
-                try {
-                    const res = await api(`/schedules/switch-to-constant?telegram_id=${user.id}`, {
-                        method: 'POST',
-                        json: {},
-                    });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                        tg.showAlert(data.error || 'Could not switch. You need an active Pro subscription.');
-                        state.screen = 'settings';
-                        state.stack = ['dashboard'];
-                        render();
-                        return;
-                    }
-                    if (state.userRow) {
-                        state.userRow = { ...state.userRow, shift_type: 'constant' };
-                    }
-                    state.rotatingPattern = null;
-                    state.finishingConstantSetup = true;
-                    state.screen = 'setup_perm';
-                    state.stack = ['settings'];
-                    render();
-                } catch (e) {
-                    console.error(e);
-                    tg.showAlert('Request failed');
-                    state.screen = 'settings';
-                    state.stack = ['dashboard'];
-                    render();
-                }
-            };
+            bsc.onclick = () => goToScheduleTypePicker();
         }
         if (isRotatingServer()) {
             const ern = document.getElementById('ed-rot-n');
             if (ern) ern.onclick = () => openEditRotatingTemplate('night');
             const erd = document.getElementById('ed-rot-d');
             if (erd) erd.onclick = () => openEditRotatingTemplate('day');
+            const bindRw = (id, shift, kind) => {
+                const el = document.getElementById(id);
+                if (el) el.onclick = () => openEditRotatingWindows(shift, kind);
+            };
+            bindRw('er-n-co', 'night', 'coffee');
+            bindRw('er-n-me', 'night', 'meal');
+            bindRw('er-n-li', 'night', 'light');
+            bindRw('er-d-co', 'day', 'coffee');
+            bindRw('er-d-me', 'day', 'meal');
+            bindRw('er-d-li', 'day', 'light');
         } else {
             const o = document.getElementById('ed-ws');
             if (o) o.onclick = () => openEditWork();
@@ -1923,39 +2236,7 @@
         }
         const btnRe = document.getElementById('btn-rebuild-rec');
         if (btnRe) {
-            btnRe.onclick = async () => {
-                if (!window.confirm('Replace coffee, meal, and light using your current work and sleep?')) {
-                    return;
-                }
-                renderLoading();
-                try {
-                    const res = await api(`/schedules/constant?telegram_id=${user.id}`, {
-                        method: 'POST',
-                        json: workSleepPayloadForRebuild(state.schedule),
-                    });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                        tg.showAlert(
-                            (data && data.error) || 'Could not rebuild schedule. Check Pro and connection.'
-                        );
-                        state.screen = 'settings';
-                        state.stack = ['dashboard'];
-                        render();
-                        return;
-                    }
-                    await loadUserAndSchedule();
-                    state.screen = 'settings';
-                    state.stack = ['dashboard'];
-                    tg.showAlert('Schedule rebuilt.');
-                    render();
-                } catch (e) {
-                    console.error(e);
-                    tg.showAlert('Request failed');
-                    state.screen = 'settings';
-                    state.stack = ['dashboard'];
-                    render();
-                }
-            };
+            btnRe.onclick = () => goToScheduleTypePicker();
         }
         const cancelSub = document.getElementById('btn-cancel-sub');
         if (cancelSub) {
@@ -2112,6 +2393,96 @@
             work_end: pick(sched?.work_end, '06:00'),
             sleep_start: pick(sched?.sleep_start, '08:00'),
             sleep_end: pick(sched?.sleep_end, '16:00'),
+        };
+    }
+
+    function openEditRotatingWindows(shift, kind) {
+        if (!isRotatingServer() || !state.rotatingPattern) {
+            tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
+            return;
+        }
+        if (shift === 'day' && !patternHasDayWork()) {
+            tg.showAlert('This pattern has no day shifts.');
+            return;
+        }
+        const sh = { ...rotatingShiftsObj() };
+        const sec = { ...(sh[shift] || {}) };
+        const key =
+            kind === 'coffee' ? 'coffee_windows' : kind === 'meal' ? 'meal_windows' : 'brightness_windows';
+        let arr = Array.isArray(sec[key]) ? [...sec[key]] : [];
+        const labels = {
+            coffee: ['FIRST COFFEE', 'SECOND COFFEE'],
+            meal: ['MEAL 1', 'MEAL 2', 'MEAL 3'],
+            light: ['LIGHT 1', 'LIGHT 2'],
+        }[kind] || ['A', 'B'];
+        const n = Math.max(kind === 'meal' ? 1 : 2, arr.length);
+        while (arr.length < n) {
+            const def = {
+                time: '12:00',
+                message: kind === 'coffee' ? '☕ Coffee' : kind === 'meal' ? '🍽️ Meal' : '💡 Light',
+                type: 'custom',
+            };
+            arr.push(def);
+        }
+        const title =
+            (shift === 'night' ? '🌙 Night' : '☀️ Day') +
+            ' · ' +
+            (kind === 'coffee' ? 'Coffee' : kind === 'meal' ? 'Meals' : 'Light');
+        const rows = arr
+            .map((w, i) => {
+                const t = w.time || '12:00';
+                const label = labels[i] || `SLOT ${i + 1}`;
+                return `<p class="nf-field-label">${label}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || '')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `rw-${i}`)}</div></div>`;
+            })
+            .join('');
+        openModal(`
+            <div class="nf-topbar" style="margin-bottom:12px;">
+                <button type="button" class="nf-back" id="mrw-close">←</button>
+                <h1 style="font-size:1rem;">${escapeHtml(title)}</h1>
+                <span></span>
+            </div>
+            ${rows}
+            <p class="nf-sub">Saves to your <strong>${shift}</strong> template. Transition days may still use a fixed plan.</p>
+            <div class="nf-row-btns">
+                <button type="button" class="nf-cta" id="mrw-save">SAVE</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="mrw-can">CANCEL</button>
+            </div>`);
+        document.getElementById('mrw-close').onclick = closeModal;
+        document.getElementById('mrw-can').onclick = closeModal;
+        document.getElementById('mrw-save').onclick = async () => {
+            const next = arr.map((w, i) => ({
+                ...w,
+                time: document.getElementById(`rw-${i}`).value,
+            }));
+            const nextSec = { ...sec, [key]: next };
+            const payload = { [shift]: nextSec };
+            closeModal();
+            renderLoading();
+            try {
+                const res = await api(`/schedules/rotating?telegram_id=${user.id}`, {
+                    method: 'PATCH',
+                    json: payload,
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    tg.showAlert(data.error || 'Could not save');
+                    state.screen = 'settings';
+                    render();
+                    return;
+                }
+                state.rotatingPattern = data;
+                await loadUserAndSchedule();
+                state.screen = 'settings';
+                state.stack = ['dashboard'];
+                render();
+            } catch (e) {
+                console.error(e);
+                tg.showAlert('Request failed');
+                state.screen = 'settings';
+                render();
+            }
         };
     }
 

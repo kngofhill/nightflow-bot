@@ -500,6 +500,105 @@ def create_constant():
     return jsonify(optimized)
 
 
+def _strip_schedule_windows_for_tier(urow, row_dict: dict) -> dict:
+    out = dict(row_dict)
+    if urow and not has_pro_entitlement(urow):
+        out["coffee_windows"] = []
+        out["meal_windows"] = []
+        out["brightness_windows"] = []
+    return out
+
+
+@bp.route("/preview", methods=["GET"])
+def schedule_preview():
+    """Pro: upcoming 1–7 local days of computed schedule (constant = same template; rotating = pattern per day)."""
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+    try:
+        nd = int(request.args.get("days", 1))
+    except (TypeError, ValueError):
+        nd = 1
+    nd = min(max(nd, 1), 7)
+    urow = fetch_user_row_by_id(user_id)
+    if not urow:
+        return jsonify({"error": "User not found"}), 404
+    tz = urow.get("timezone") or DEFAULT_TIMEZONE
+    now_local = get_user_now_from_timezone_name(tz)
+    today = now_local.date()
+    raw_prefs = urow.get("notification_prefs") or {}
+    if isinstance(raw_prefs, str):
+        raw_prefs = safe_json_parse(raw_prefs) or {}
+    prefs = raw_prefs if isinstance(raw_prefs, dict) else {}
+
+    days: list = []
+    st = urow.get("shift_type")
+    if st == "rotating":
+        rpat = (
+            supabase_client.table("rotating_patterns")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not rpat.data:
+            return jsonify({"error": "No active rotating pattern", "days": []}), 404
+        for i in range(nd):
+            d = today + timedelta(days=i)
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), d)
+            if comp is not None:
+                days.append(_strip_schedule_windows_for_tier(urow, comp))
+    else:
+        const = (
+            supabase_client.table("constant_schedules")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not const.data:
+            return jsonify({"error": "No active schedule", "days": []}), 404
+        c0 = dict(const.data[0])
+        for f in ("coffee_windows", "meal_windows", "brightness_windows"):
+            c0[f] = safe_json_parse(c0.get(f))
+        for i in range(nd):
+            d = today + timedelta(days=i)
+            one = {
+                "date": str(d),
+                "shift_type": c0.get("shift_type"),
+                "work_start": c0.get("work_start"),
+                "work_end": c0.get("work_end"),
+                "sleep_start": c0.get("sleep_start"),
+                "sleep_end": c0.get("sleep_end"),
+                "is_custom": False,
+                "coffee_windows": c0.get("coffee_windows", []),
+                "meal_windows": c0.get("meal_windows", []),
+                "brightness_windows": c0.get("brightness_windows", []),
+                "transition_advice": None,
+                "is_transition_day": False,
+            }
+            for f in ("work_start", "work_end", "sleep_start", "sleep_end"):
+                t = one.get(f)
+                if t is not None and hasattr(t, "strftime"):
+                    one[f] = t.strftime("%H:%M")
+                elif isinstance(t, str) and len(t) >= 5:
+                    one[f] = t[:5]
+            days.append(_strip_schedule_windows_for_tier(urow, one))
+
+    return jsonify(
+        {
+            "days": days,
+            "transitionReminders": bool(prefs.get("transitionReminders", True)),
+            "transitionLeadDays": str(prefs.get("transitionLeadDays", "3")),
+        }
+    )
+
+
 @bp.route("/daily/today", methods=["GET"])
 def today_daily():
     user_id, err = get_user_from_request()
