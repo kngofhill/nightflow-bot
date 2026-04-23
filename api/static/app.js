@@ -1802,13 +1802,17 @@
 
             if (showReport) {
                 body += `
-                    <div class="nf-card nf-report-card">
-                        <div class="nf-card-label">📝 End of shift</div>
-                        <p class="nf-muted" style="margin:0 0 12px;font-size:0.86rem;">Log how this shift went for your week insights.</p>
-                        <div class="nf-report-card-actions">
-                            <button type="button" class="nf-cta" id="btn-dash-report">Log check-in</button>
-                            <button type="button" class="nf-cta-secondary nf-btn-eos-ignore" id="btn-dash-report-ignore">Ignore today</button>
+                    <div class="nf-card nf-eos-prompt" role="region" aria-label="End of shift check-in">
+                        <div class="nf-eos-prompt__row">
+                            <div class="nf-eos-prompt__icon" aria-hidden="true">🌙</div>
+                            <div class="nf-eos-prompt__copy">
+                                <p class="nf-eos-prompt__kicker">End of shift</p>
+                                <p class="nf-eos-prompt__title">Quick check-in for today</p>
+                                <p class="nf-eos-prompt__sub">A few taps update your <strong>weekly report</strong> and trends.</p>
+                            </div>
                         </div>
+                        <button type="button" class="nf-cta" id="btn-dash-report">Start check-in</button>
+                        <button type="button" class="nf-eos-skip" id="btn-dash-report-ignore">Skip for today</button>
                     </div>`;
             }
         }
@@ -3723,16 +3727,18 @@
         const coffees = (sched.coffee_windows || []).slice(0, 2);
         const meals = (sched.meal_windows || []).slice(0, 6);
         const localDateStr = d.toISOString().slice(0, 10);
+        const hasHabitSlots = coffees.length > 0 || meals.length > 0;
 
         const slider = (id, label, minL, maxL) => {
             const rid = `nf-r-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
             return `
             <div class="nf-slider-block nf-summary-slider">
                 <div class="nf-slider-label">
-                    <span>${label}</span>
+                    <span class="nf-slider-title">${label}</span>
                     <output class="nf-range-val" for="${rid}">2</output>
                 </div>
                 <input type="range" class="nf-range" id="${rid}" min="1" max="4" value="2" step="1" data-k="${id}" />
+                <div class="nf-range-ticks" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span></div>
                 <div class="nf-scale" aria-hidden="true"><span>${minL}</span><span>${maxL}</span></div>
             </div>`;
         };
@@ -3744,57 +3750,70 @@
         });
 
         let body = '';
-        body += `<div class="nf-summary-hero">
-            <div class="nf-summary-hero-ico" aria-hidden="true">🌙</div>
-            <h2 class="nf-summary-hero-title">End of shift</h2>
-            <p class="nf-summary-hero-date">${escapeHtml(dateLong)}</p>
-            <p class="nf-summary-hero-sub">Quick check-in for your week view. Use the scales; add detail if you want.</p>
+        body += `<header class="nf-checkin-hero" aria-label="Check-in for today">
+            <h2 class="nf-checkin-hero__title">End of shift</h2>
+            <p class="nf-checkin-hero__date"><span class="nf-checkin-hero__date-ico" aria-hidden="true">📅</span> ${escapeHtml(
+                dateLong
+            )}</p>
+        </header>`;
+
+        body += `<div class="nf-card nf-checkin-card">
+            <div class="nf-checkin-step">
+                <span class="nf-checkin-step__num" aria-hidden="true">1</span>
+                <div class="nf-checkin-step__main">
+                    <h3 class="nf-checkin-step__h">How you feel</h3>
+                    <p class="nf-checkin-step__hint">1 = low · 4 = high — <span class="nf-checkin-nowrap">rough guess is fine</span></p>
+                    <p class="nf-checkin-legend" aria-label="Scale meaning">
+                        <span class="nf-checkin-legend__item">Energy: mood after this shift</span>
+                        <span class="nf-checkin-legend__sep" aria-hidden="true">·</span>
+                        <span class="nf-checkin-legend__item">Sleep: last main sleep, not a diagnosis</span>
+                    </p>
+                    ${slider('energy', 'Energy right now', '😫 Drained', '⚡ Great')}
+                    ${slider('sleepq', 'Sleep quality (last rest)', '😫 Rough', '😊 Rested')}
+                </div>
+            </div>
         </div>`;
 
-        body += `<div class="nf-card nf-summary-card">
-            <p class="nf-summary-section-kicker">How it went</p>
-            <h3 class="nf-summary-section-h">Energy &amp; sleep</h3>
-            ${slider('energy', 'Energy (right now)', '😴', '⚡')}
-            ${slider('sleepq', 'Sleep quality (last rest)', '😴', '😊')}
-        </div>`;
-
-        if (coffees.length) {
-            let block = `<p class="nf-summary-section-kicker">Scheduled slots</p>
-            <h3 class="nf-summary-section-h">Coffee</h3>
-            <p class="nf-summary-section-desc">Adherence: missed left → on track right</p>`;
-            coffees.forEach((c, i) => {
-                const lab = escapeHtml(`Coffee @ ${formatTime(c.time)}`);
-                block += slider(`co-${i}`, lab, '❌', '✅');
-            });
-            body += `<div class="nf-card nf-summary-card">${block}</div>`;
-        }
-        if (meals.length) {
-            let block = `<p class="nf-summary-section-kicker">Scheduled slots</p>
-            <h3 class="nf-summary-section-h">Meals</h3>
-            <p class="nf-summary-section-desc">Adherence: missed left → on track right</p>`;
-            meals.forEach((m, i) => {
-                const lab = escapeHtml(`Meal @ ${formatTime(m.time)}`);
-                block += slider(`me-${i}`, lab, '❌', '✅');
-            });
-            body += `<div class="nf-card nf-summary-card">${block}</div>`;
-        }
-        if (!coffees.length && !meals.length) {
-            body += `<p class="nf-summary-inline-note nf-muted">No coffee or meal times on today’s plan — you can still log energy and sleep below.</p>`;
+        if (hasHabitSlots) {
+            let habitBlock = `<div class="nf-card nf-checkin-card nf-checkin-card--habit">
+            <div class="nf-checkin-step">
+                <span class="nf-checkin-step__num" aria-hidden="true">2</span>
+                <div class="nf-checkin-step__main">
+                    <h3 class="nf-checkin-step__h">Habits vs your plan</h3>
+                    <p class="nf-checkin-step__hint">1 = missed the window · 4 = on track</p>`;
+            if (coffees.length) {
+                habitBlock += `<p class="nf-checkin-subh">☕ Coffee</p>`;
+                coffees.forEach((c, i) => {
+                    const lab = escapeHtml(`Scheduled ${formatTime(c.time)}`);
+                    habitBlock += slider(`co-${i}`, lab, 'Missed', 'On track');
+                });
+            }
+            if (meals.length) {
+                habitBlock += `<p class="nf-checkin-subh nf-checkin-subh--meals">🍽 Meals</p>`;
+                meals.forEach((m, i) => {
+                    const lab = escapeHtml(`Scheduled ${formatTime(m.time)}`);
+                    habitBlock += slider(`me-${i}`, lab, 'Missed', 'On track');
+                });
+            }
+            habitBlock += `</div></div></div>`;
+            body += habitBlock;
+        } else {
+            body += `<p class="nf-checkin-note nf-muted" role="note">No coffee or meal times in today’s plan — step 1 is enough. Add times in <strong>Settings</strong> or <strong>Full schedule</strong> when you’re ready.</p>`;
         }
 
         $root.innerHTML = `
             <div class="nf-screen nf-summary-screen">
                 <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bsum">← BACK</button>
+                    <button type="button" class="nf-back" id="bsum">←</button>
                     <h1>Check-in</h1>
                     <span></span>
                 </div>
-                <div class="nf-summary-body">
+                <div class="nf-summary-body nf-summary-body--checkin">
                 ${body}
                 </div>
                 <div class="nf-summary-actions">
-                    <button type="button" class="nf-cta" id="btn-save-sum">Save check-in</button>
-                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more">More detail</button>
+                    <button type="button" class="nf-cta" id="btn-save-sum">Save</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more">Add detail (optional)</button>
                 </div>
             </div>`;
         $root.querySelectorAll('input.nf-range').forEach((el) => {
