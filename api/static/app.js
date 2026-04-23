@@ -82,6 +82,10 @@
         onboardingFromSettings: false,
         /** 1, 3, or 7 — full schedule range (Pro) */
         fullScheduleRange: 1,
+        /** After "Adjust in settings" on a suggestion: open the right editor once */
+        settingsFocus: null,
+        /** Current suggestions list (for deep-link to settings) */
+        suggestionItems: null,
     };
 
     try {
@@ -99,6 +103,115 @@
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
+    }
+
+    function localDateStrNow() {
+        return new Date().toISOString().slice(0, 10);
+    }
+    function eosKey(suffix) {
+        return `nf_eos_${suffix}_${localDateStrNow()}`;
+    }
+    function isEosIgnoredToday() {
+        try {
+            return localStorage.getItem(eosKey('ignore')) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+    function isEosDoneToday() {
+        try {
+            return localStorage.getItem(eosKey('done')) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+    function setEosDoneToday() {
+        try {
+            localStorage.setItem(eosKey('done'), '1');
+        } catch (e) {}
+    }
+    function setEosIgnoreToday() {
+        try {
+            localStorage.setItem(eosKey('ignore'), '1');
+        } catch (e) {}
+    }
+    function suggestionFingerprint(it) {
+        if (!it) return '';
+        return [it.title, it.body, it.action].join('\u0001');
+    }
+    function getIgnoredSuggestionSet() {
+        try {
+            const a = JSON.parse(localStorage.getItem('nf_sug_ignored') || '[]');
+            return new Set(Array.isArray(a) ? a : []);
+        } catch (e) {
+            return new Set();
+        }
+    }
+    function ignoreSuggestionKey(key) {
+        const s = getIgnoredSuggestionSet();
+        s.add(key);
+        const arr = [...s].slice(-80);
+        try {
+            localStorage.setItem('nf_sug_ignored', JSON.stringify(arr));
+        } catch (e) {}
+    }
+    function settingsTargetFromApply(apply) {
+        if (!apply || !apply.op) return null;
+        const op = apply.op;
+        if (op === 'extend_sleep') {
+            if (isRotatingServer()) {
+                const tpl = apply.template === 'day' ? 'day' : 'night';
+                return { rotating: true, kind: 'sleep', template: tpl };
+            }
+            return { rotating: false, kind: 'work' };
+        }
+        const kind =
+            op === 'shift_coffee' ? 'coffee' : op === 'shift_meal' ? 'meal' : op === 'shift_bright' ? 'light' : null;
+        if (!kind) return null;
+        if (isRotatingServer() && (apply.template === 'night' || apply.template === 'day')) {
+            return { rotating: true, shift: apply.template, kind };
+        }
+        return { rotating: false, kind };
+    }
+    /** Open the right editor after navigating to Settings (see openSettingsFromSuggestion). */
+    function consumeSettingsFocus() {
+        const t = state.settingsFocus;
+        if (!t) return;
+        state.settingsFocus = null;
+        setTimeout(() => {
+            if (t.rotating) {
+                if (t.kind === 'sleep') {
+                    openEditRotatingTemplate(t.template === 'day' ? 'day' : 'night');
+                    return;
+                }
+                if (t.shift && (t.kind === 'coffee' || t.kind === 'meal' || t.kind === 'light')) {
+                    openEditRotatingWindows(t.shift, t.kind);
+                    return;
+                }
+            } else {
+                if (t.kind === 'work') {
+                    openEditWork();
+                    return;
+                }
+                if (t.kind === 'coffee') {
+                    openEditCoffee();
+                    return;
+                }
+                if (t.kind === 'meal') {
+                    openEditMeals();
+                    return;
+                }
+                if (t.kind === 'light') {
+                    openEditLight();
+                    return;
+                }
+            }
+        }, 0);
+    }
+    function openSettingsFromSuggestion(apply) {
+        const t = settingsTargetFromApply(apply);
+        if (t) state.settingsFocus = t;
+        go('settings', true);
     }
 
     function pad2(n) {
@@ -1488,7 +1601,11 @@
         const isOff = sched.shift_type === 'off';
         const st = sched.shift_type || 'night';
         const showReport =
-            hasProEntitlement() && !isOff && shouldShowReportCard(sched.work_start, sched.work_end);
+            hasProEntitlement() &&
+            !isOff &&
+            shouldShowReportCard(sched.work_start, sched.work_end) &&
+            !isEosIgnoredToday() &&
+            !isEosDoneToday();
         const next = isOff ? null : getNextEvent(sched);
         const rotating = isRotatingUi();
 
@@ -1617,8 +1734,12 @@
             if (showReport) {
                 body += `
                     <div class="nf-card nf-report-card">
-                        <div class="nf-card-label">📝 REPORT YOUR DAY</div>
-                        <button type="button" class="nf-cta" id="btn-dash-report">LOG END OF SHIFT</button>
+                        <div class="nf-card-label">📝 End of shift</div>
+                        <p class="nf-muted" style="margin:0 0 12px;font-size:0.86rem;">Log how this shift went for your week insights.</p>
+                        <div class="nf-report-card-actions">
+                            <button type="button" class="nf-cta" id="btn-dash-report">Log check-in</button>
+                            <button type="button" class="nf-cta-secondary nf-btn-eos-ignore" id="btn-dash-report-ignore">Ignore today</button>
+                        </div>
                     </div>`;
             }
         }
@@ -1656,6 +1777,13 @@
 
         const offRec = document.getElementById('btn-off-rec');
         if (offRec) offRec.onclick = () => openOffDayRecommendations(sched);
+        const repIgn = document.getElementById('btn-dash-report-ignore');
+        if (repIgn) {
+            repIgn.onclick = () => {
+                setEosIgnoreToday();
+                renderDashboard();
+            };
+        }
 
         const tr = document.getElementById('btn-dash-trans');
         if (tr) tr.onclick = () => go('transition', true);
@@ -1909,73 +2037,129 @@
             }
 
             if (!Array.isArray(items)) items = [];
+            state.suggestionItems = items;
+
+            const ignored = getIgnoredSuggestionSet();
+            const visible = items
+                .map((it, origIdx) => ({ it, origIdx }))
+                .filter(({ it }) => it && !ignored.has(suggestionFingerprint(it)));
+
+            const sugRows = visible.length
+                ? visible
+                      .map(
+                          ({ it, origIdx }) => `
+                        <div class="nf-suggestion nf-suggestion-selectable" data-sug-idx="${origIdx}">
+                            <label class="nf-sug-check">
+                                <input type="checkbox" class="nf-sug-cb" value="${origIdx}" />
+                                <span class="nf-sug-check-ui" aria-hidden="true"></span>
+                            </label>
+                            <div class="nf-sug-body">
+                            <h3>${escapeHtml(it.title)}</h3>
+                            <p>${escapeHtml(it.body)}</p>
+                            <p class="nf-sug-action">→ ${escapeHtml(it.action)}</p>
+                            <div class="nf-sug-actions">
+                                <button type="button" class="nf-btn-sug-ignore js-sug-ignore" data-fp="${escapeHtml(
+                                    suggestionFingerprint(it)
+                                )}">Ignore</button>
+                                <button type="button" class="nf-btn-sug-settings js-sug-adj" data-orig-idx="${origIdx}">Adjust in settings</button>
+                            </div>
+                            </div>
+                        </div>`
+                      )
+                      .join('')
+                : `<div class="nf-card nf-center"><div style="font-weight:600;">No suggestions right now.</div><div class="nf-muted" style="margin-top:6px;">Keep logging your day — or clear ignored items from earlier.</div></div>`;
 
             $root.innerHTML = `
-                <div class="nf-screen">
+                <div class="nf-screen nf-sug-screen">
                     <div class="nf-topbar">
-                        <button type="button" class="nf-back" id="bsu">← BACK</button>
+                        <button type="button" class="nf-back" id="bsu">← Back</button>
                         <h1>Suggestions</h1>
                         <span></span>
                     </div>
+                    <p class="nf-sug-lead">Select one or more ideas, then apply in one go. Ignored items stay hidden.</p>
+                    ${sugRows}
                     ${
-                        items.length
-                            ? items
-                                  .map(
-                                      (it) => `
-                        <div class="nf-suggestion">
-                            <h3>${escapeHtml(it.title)}</h3>
-                            <p>${escapeHtml(it.body)}</p>
-                            <p style="font-weight:600;">→ ${escapeHtml(it.action)}</p>
-                            <div class="nf-row-btns">
-                                <button type="button" class="nf-cta js-apply">APPLY</button>
-                                <button type="button" class="nf-cta nf-cta-secondary js-adj">ADJUST IN SETTINGS</button>
-                            </div>
-                        </div>`
-                                  )
-                                  .join('')
-                            : `<div class="nf-card nf-center"><div style="font-weight:600;">No suggestions this week.</div><div class="nf-muted" style="margin-top:6px;">Keep logging your day.</div></div>`
+                        visible.length
+                            ? `<div class="nf-sug-apply-bar">
+                        <button type="button" class="nf-cta" id="btn-sug-apply" disabled>Apply selected</button>
+                    </div>`
+                            : ''
                     }
-                    <button type="button" class="nf-cta nf-cta-secondary" id="bsub">BACK TO DASHBOARD</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="bsub">Back to dashboard</button>
                 </div>`;
 
             document.getElementById('bsu').onclick = back;
             document.getElementById('bsub').onclick = back;
-            $root.querySelectorAll('.js-adj').forEach((b) => {
-                b.addEventListener('click', () => go('settings', true));
+
+            const applyBtn = document.getElementById('btn-sug-apply');
+            const syncApplyEnabled = () => {
+                if (!applyBtn) return;
+                const n = $root.querySelectorAll('.nf-sug-cb:checked').length;
+                applyBtn.disabled = n < 1;
+                applyBtn.textContent = n < 1 ? 'Apply selected' : `Apply selected (${n})`;
+            };
+            $root.querySelectorAll('.nf-sug-cb').forEach((cb) => {
+                cb.addEventListener('change', syncApplyEnabled);
             });
-            $root.querySelectorAll('.js-apply').forEach((b, i) => {
-                b.addEventListener('click', async () => {
-                    b.setAttribute('disabled', 'true');
+            syncApplyEnabled();
+
+            $root.querySelectorAll('.js-sug-ignore').forEach((b) => {
+                b.addEventListener('click', () => {
+                    const fp = b.getAttribute('data-fp');
+                    if (fp) ignoreSuggestionKey(fp);
+                    renderSuggestions();
+                });
+            });
+            $root.querySelectorAll('.js-sug-adj').forEach((b) => {
+                b.addEventListener('click', () => {
+                    const i = parseInt(b.getAttribute('data-orig-idx') || '', 10);
+                    const it = Array.isArray(state.suggestionItems) ? state.suggestionItems[i] : null;
+                    if (it && it.apply) openSettingsFromSuggestion(it.apply);
+                    else go('settings', true);
+                });
+            });
+
+            if (applyBtn) {
+                applyBtn.addEventListener('click', async () => {
+                    const selected = [...$root.querySelectorAll('.nf-sug-cb:checked')]
+                        .map((cb) => parseInt(cb.value, 10))
+                        .filter((n) => !Number.isNaN(n));
+                    if (selected.length < 1) return;
+                    applyBtn.setAttribute('disabled', 'true');
                     try {
                         const res = await api(`/schedules/suggestions/apply?telegram_id=${user.id}`, {
                             method: 'POST',
-                            json: { suggestion_index: i },
+                            json: { suggestion_indices: selected },
                         });
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) {
                             tg.showAlert(
-                                (data && data.error) || 'Could not apply this suggestion. Try again.'
+                                (data && data.error) || 'Could not apply. Try again or apply one at a time.'
                             );
-                            b.removeAttribute('disabled');
+                            applyBtn.removeAttribute('disabled');
                             return;
                         }
                         if (data && data.rotating) {
                             const ok = await reloadScheduleFromApi();
                             if (!ok) console.warn('reload after suggestion apply (rotating)');
                         } else {
-                            applyConstantRowToState(data);
+                            if (data && data.work_start !== undefined) applyConstantRowToState(data);
                             const ok = await reloadScheduleFromApi();
                             if (!ok) console.warn('reload after suggestion apply');
                         }
-                        tg.showAlert('Your schedule was updated.');
-                        go('settings', true);
+                        tg.showAlert(
+                            `Updated ${(data && data.applied) || selected.length} suggestion${
+                                (data && data.applied) === 1 ? '' : 's'
+                            }.`
+                        );
+                        renderSuggestions();
                     } catch (e) {
-                        console.warn('apply suggestion', e);
+                        console.warn('apply suggestions', e);
                         tg.showAlert('Could not apply. Check your connection.');
                     }
-                    b.removeAttribute('disabled');
+                    applyBtn.removeAttribute('disabled');
                 });
-            });
+            }
         })();
     }
 
@@ -2312,6 +2496,7 @@
 
     function renderSettings() {
         if (!hasProEntitlement()) {
+            state.settingsFocus = null;
             renderSettingsReadOnly();
             return;
         }
@@ -2340,7 +2525,7 @@
             ? `<div class="nf-card nf-billing-box">
                     <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 Pro billing</h3>
                     <p class="nf-muted" style="margin:0 0 12px;font-size:0.86rem;">Recurring in Telegram. Cancel to stop future Star charges. You keep Pro until your current period ends.</p>
-                    <button type="button" class="nf-cta-secondary nf-btn-cancel-sub" id="btn-cancel-sub">Cancel Subscription</button>
+                    <button type="button" class="nf-btn-cancel-sub-pretty" id="btn-cancel-sub">Cancel subscription</button>
                 </div>`
             : subCancelled && proExp
             ? `<p class="nf-billing-notice">Your subscription will not renew. You keep Pro access until <strong>${escapeHtml(
@@ -2499,7 +2684,7 @@
             ? `<div class="nf-card nf-settings-action-card nf-card-schedule-type">
                         <h3 class="nf-free-h3" style="margin:0 0 8px;">Schedule type</h3>
                         <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.4;">Open the first step to use a <strong>permanent</strong> (fixed) schedule or a <strong>rotating</strong> pattern. Your current setup stays until you continue on the next screen.</p>
-                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-change-schedule-type">Change schedule type</button>
+                        <button type="button" class="nf-btn-schedule-type" id="btn-change-schedule-type">Change schedule type</button>
                    </div>`
             : '';
         $root.innerHTML = `
@@ -2697,6 +2882,7 @@
                 applyUserSettingsFromUserRow(row);
             });
         });
+        consumeSettingsFocus();
     }
 
     function toggleRow(label, key, on) {
@@ -2722,7 +2908,7 @@
         return bw.map((w) => w.time).join(' · ') || '—';
     }
 
-    function openEditRotatingWindows(shift, kind) {
+    function openEditRotatingWindows(shift, kind, prefill) {
         if (!isRotatingServer() || !state.rotatingPattern) {
             tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
             return;
@@ -2735,7 +2921,11 @@
         const sec = { ...(sh[shift] || {}) };
         const key =
             kind === 'coffee' ? 'coffee_windows' : kind === 'meal' ? 'meal_windows' : 'brightness_windows';
-        let arr = Array.isArray(sec[key]) ? [...sec[key]] : [];
+        let arr = Array.isArray(prefill)
+            ? [...prefill]
+            : Array.isArray(sec[key])
+              ? [...sec[key]]
+              : [];
         const labels = {
             coffee: ['FIRST COFFEE', 'SECOND COFFEE'],
             meal: ['MEAL 1', 'MEAL 2', 'MEAL 3'],
@@ -2770,6 +2960,7 @@
                 <span></span>
             </div>
             ${rows}
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mrw-add">+ Add another</button>
             <p class="nf-sub">Saves to your <strong>${shift}</strong> template. Transition days may still use a fixed plan.</p>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="mrw-save">SAVE</button>
@@ -2777,6 +2968,22 @@
             </div>`);
         document.getElementById('mrw-close').onclick = closeModal;
         document.getElementById('mrw-can').onclick = closeModal;
+        const addBtn = document.getElementById('mrw-add');
+        if (addBtn) {
+            addBtn.onclick = () => {
+                const next = arr.map((w, i) => ({
+                    ...w,
+                    time: (document.getElementById(`rw-${i}`) || {}).value || w.time || '12:00',
+                }));
+                next.push({
+                    time: '12:00',
+                    message: kind === 'coffee' ? '☕ Coffee' : kind === 'meal' ? '🍽️ Meal' : '💡 Light',
+                    type: 'custom',
+                });
+                closeModal();
+                openEditRotatingWindows(shift, kind, next);
+            };
+        }
         document.getElementById('mrw-save').onclick = async () => {
             const next = arr.map((w, i) => ({
                 ...w,
@@ -2958,9 +3165,9 @@
         };
     }
 
-    function openEditCoffee() {
+    function openEditCoffee(prefill) {
         const sched = state.schedule || {};
-        let cw = [...(sched.coffee_windows || [])];
+        let cw = Array.isArray(prefill) ? [...prefill] : [...(sched.coffee_windows || [])];
         const n = Math.max(2, cw.length);
         while (cw.length < n) {
             cw.push({
@@ -2985,12 +3192,25 @@
                 <span></span>
             </div>
             ${rows}
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mc-add">+ Add another</button>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="mc-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="mc-can">CANCEL</button>
             </div>`);
         document.getElementById('mc-close').onclick = closeModal;
         document.getElementById('mc-can').onclick = closeModal;
+        const addCoffee = document.getElementById('mc-add');
+        if (addCoffee) {
+            addCoffee.onclick = () => {
+                const next = cw.map((w, i) => ({
+                    ...w,
+                    time: (document.getElementById(`c-${i}`) || {}).value || w.time || '22:00',
+                }));
+                next.push({ time: '12:00', message: '☕ Coffee', type: 'mid_shift' });
+                closeModal();
+                openEditCoffee(next);
+            };
+        }
         document.getElementById('mc-save').onclick = async () => {
             const next = cw.map((w, i) => ({
                 ...w,
@@ -3017,9 +3237,9 @@
         };
     }
 
-    function openEditMeals() {
+    function openEditMeals(prefill) {
         const sched = state.schedule || {};
-        let mw = [...(sched.meal_windows || [])];
+        let mw = Array.isArray(prefill) ? [...prefill] : [...(sched.meal_windows || [])];
         const n = Math.max(1, mw.length);
         while (mw.length < n) {
             mw.push({ time: '12:00', message: '🍽️ Meal', type: 'mid_shift' });
@@ -3039,12 +3259,25 @@
                 <span></span>
             </div>
             ${rows}
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mm-add">+ Add another</button>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="mm-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="mm-can">CANCEL</button>
             </div>`);
         document.getElementById('mm-close').onclick = closeModal;
         document.getElementById('mm-can').onclick = closeModal;
+        const addMeal = document.getElementById('mm-add');
+        if (addMeal) {
+            addMeal.onclick = () => {
+                const next = mw.map((w, i) => ({
+                    ...w,
+                    time: (document.getElementById(`m-${i}`) || {}).value || w.time || '12:00',
+                }));
+                next.push({ time: '12:00', message: '🍽️ Meal', type: 'mid_shift' });
+                closeModal();
+                openEditMeals(next);
+            };
+        }
         document.getElementById('mm-save').onclick = async () => {
             const next = mw.map((w, i) => ({
                 ...w,
@@ -3071,9 +3304,9 @@
         };
     }
 
-    function openEditLight() {
+    function openEditLight(prefill) {
         const sched = state.schedule || {};
-        let bw = [...(sched.brightness_windows || [])];
+        let bw = Array.isArray(prefill) ? [...prefill] : [...(sched.brightness_windows || [])];
         const n = Math.max(1, bw.length);
         while (bw.length < n) {
             bw.push({
@@ -3098,12 +3331,30 @@
                 <span></span>
             </div>
             ${rows}
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="ml-add">+ Add another</button>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="ml-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="ml-can">CANCEL</button>
             </div>`);
         document.getElementById('ml-close').onclick = closeModal;
         document.getElementById('ml-can').onclick = closeModal;
+        const addLight = document.getElementById('ml-add');
+        if (addLight) {
+            addLight.onclick = () => {
+                const next = bw.map((w, i) => ({
+                    ...w,
+                    time: (document.getElementById(`l-${i}`) || {}).value || w.time || '21:00',
+                }));
+                next.push({
+                    time: '22:00',
+                    message: '💡 Light reminder',
+                    type: 'dim',
+                    action: 'dim_lights',
+                });
+                closeModal();
+                openEditLight(next);
+            };
+        }
         document.getElementById('ml-save').onclick = async () => {
             const next = bw.map((w, i) => ({
                 ...w,
@@ -3548,6 +3799,7 @@
                 return;
             }
 
+            setEosDoneToday();
             tg.showAlert('Saved.');
             back();
         };

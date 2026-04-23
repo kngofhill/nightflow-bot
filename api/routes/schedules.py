@@ -19,7 +19,7 @@ from shared.insights import get_habits_effective_from_date, week_query_start, bu
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 bp = Blueprint("schedules", __name__, url_prefix="/api/v1/schedules")
 
@@ -1031,6 +1031,54 @@ def _build_weekly_suggestion_items(user_id) -> list:
                         },
                     }
                 )
+
+        def _rot_sleep_quality_vals_for_template(pslot: str) -> list:
+            out_vals = []
+            d0 = week_start
+            rpatd = dict(rprow)
+            while d0 <= week_end:
+                if eff and d0 < eff:
+                    d0 += timedelta(days=1)
+                    continue
+                comp = build_rotating_day_from_pattern_row(rpatd, d0)
+                if (
+                    not comp
+                    or comp.get("pattern_slot") != pslot
+                    or comp.get("shift_type") == "off"
+                ):
+                    d0 += timedelta(days=1)
+                    continue
+                r = summaries_by_date.get(str(d0))
+                if r and r.get("sleep_quality") is not None:
+                    out_vals.append(int(r.get("sleep_quality")))
+                d0 += timedelta(days=1)
+            return out_vals
+
+        for pslot, lab in (("night", "🌙 NIGHT"), ("day", "☀️ DAY")):
+            if pslot == "day" and (
+                not pattern_includes_day_work(
+                    str(sh0.get("pattern_id") or "pitman_2_2_3"), int((sh0.get("block_days") or 0) or 0), sh0
+                )
+                or not dtpl
+            ):
+                continue
+            svals = _rot_sleep_quality_vals_for_template(pslot)
+            if svals:
+                avg_sq = sum(svals) / len(svals)
+                if avg_sq <= 2:
+                    suggestions.append(
+                        {
+                            "title": f"😴 {lab} · SLEEP WINDOW",
+                            "body": f"Sleep quality was low on your {pslot} shift days in the lookback period.",
+                            "action": "ADD 30 MINUTES (earlier to bed) on the "
+                            f"{pslot} template",
+                            "apply": {
+                                "op": "extend_sleep",
+                                "delta_minutes": 30,
+                                "template": pslot,
+                            },
+                        }
+                    )
         return suggestions
 
     # --- constant schedule (permanent) ---
@@ -1147,33 +1195,12 @@ def _shift_one_window_time(wlist: list, from_key: str, to_key: str):
     return (False, cwin)
 
 
-@bp.route("/suggestions/apply", methods=["POST"])
-def apply_weekly_suggestion():
-    user_id, err = get_user_from_request()
-    if err:
-        return err
-
-    denied = require_pro_access(user_id)
-    if denied:
-        return denied
-
-    body = request.get_json(silent=True) or {}
-    try:
-        idx = int(body.get("suggestion_index", body.get("index", -1)))
-    except (TypeError, ValueError):
-        idx = -1
-    if idx < 0:
-        return jsonify({"error": "suggestion_index required"}), 400
-
-    urow = fetch_user_row_by_id(user_id)
-    if not urow:
-        return jsonify({"error": "User not found"}), 404
-    items = _build_weekly_suggestion_items(user_id)
-    if idx >= len(items):
-        return jsonify({"error": "That suggestion is no longer available. Refresh the list."}), 400
-    apply_op = (items[idx] or {}).get("apply")
+def _apply_suggestion_apply_dict(user_id: str, urow: dict, apply_op: dict) -> tuple:
+    """
+    Apply a single suggestion payload. Used by one-shot index apply and by batch apply.
+    """
     if not apply_op or not apply_op.get("op"):
-        return jsonify({"error": "No apply action for this item"}), 400
+        return None, ({"error": "No apply action for this item"}, 400)
 
     op = str(apply_op.get("op") or "")
     from_t = str(apply_op.get("from") or "").strip()
@@ -1183,9 +1210,9 @@ def apply_weekly_suggestion():
     from_key = time_to_str(wsrc) if wsrc else ""
     to_key = time_to_str(wto) if wto else ""
     if op in ("shift_coffee", "shift_meal", "shift_bright") and (not wsrc or not wto):
-        return jsonify({"error": "Invalid time"}), 400
+        return None, ({"error": "Invalid time"}, 400)
 
-    if urow.get("shift_type") == "rotating":
+    if urow and urow.get("shift_type") == "rotating":
         r0 = (
             supabase_client.table("rotating_patterns")
             .select("*")
@@ -1195,7 +1222,7 @@ def apply_weekly_suggestion():
             .execute()
         )
         if not r0 or not r0.data:
-            return jsonify({"error": "No active rotating pattern"}), 404
+            return None, ({"error": "No active rotating pattern"}, 404)
         rdict = dict(r0.data[0])
         r_id = rdict["id"]
         sh = rdict.get("shifts") or {}
@@ -1211,9 +1238,20 @@ def apply_weekly_suggestion():
         sec = sh[template]
 
         if op == "extend_sleep":
-            return jsonify(
-                {"error": "For rotating patterns, change night or day sleep in Settings."}
-            ), 400
+            delta = int(apply_op.get("delta_minutes") or 0)
+            if delta < 0 or delta > 180:
+                return None, ({"error": "Invalid delta"}, 400)
+            ss0 = sec.get("sleep_start")
+            if not ss0:
+                return None, ({"error": "Set sleep times first in Settings for this template."}, 400)
+            t_slp = str_to_time(str(ss0)[:8] if isinstance(ss0, str) else str(ss0))
+            if not t_slp:
+                return None, ({"error": "Invalid sleep time"}, 400)
+            new_ss = _add_minutes_to_time_hhmm(time_to_str(t_slp), -delta)
+            sec["sleep_start"] = new_ss
+            sh[template] = sec
+            supabase_client.table("rotating_patterns").update({"shifts": sh}).eq("id", r_id).execute()
+            return (jsonify({"ok": True, "rotating": True}), None)
 
         wname = "coffee_windows"
         if op == "shift_meal":
@@ -1221,24 +1259,22 @@ def apply_weekly_suggestion():
         elif op == "shift_bright":
             wname = "brightness_windows"
         elif op != "shift_coffee":
-            return jsonify({"error": f"Unknown op: {op}"}), 400
+            return None, ({"error": f"Unknown op: {op}"}, 400)
 
         rawl = sec.get(wname)
         wlist = safe_json_parse(rawl) if isinstance(rawl, str) else (rawl if isinstance(rawl, list) else [])
         hit, cwin = _shift_one_window_time(wlist, from_key, to_key)
         if not hit:
-            return (
-                jsonify(
-                    {
-                        "error": "That time was not found on the template (schedule may have changed).",
-                    }
-                ),
+            return None, (
+                {
+                    "error": "That time was not found on the template (schedule may have changed).",
+                },
                 400,
             )
         sec[wname] = cwin
         sh[template] = sec
         supabase_client.table("rotating_patterns").update({"shifts": sh}).eq("id", r_id).execute()
-        return jsonify({"ok": True, "rotating": True})
+        return (jsonify({"ok": True, "rotating": True}), None)
 
     const = (
         supabase_client.table("constant_schedules")
@@ -1248,7 +1284,7 @@ def apply_weekly_suggestion():
         .execute()
     )
     if not const.data:
-        return jsonify({"error": "No active schedule"}), 404
+        return None, ({"error": "No active schedule"}, 404)
 
     row = dict(const.data[0])
     row_id = row["id"]
@@ -1257,37 +1293,37 @@ def apply_weekly_suggestion():
         cwin = safe_json_parse(row.get("coffee_windows")) or []
         hit, cwin2 = _shift_one_window_time(cwin, from_key, to_key)
         if not hit:
-            return jsonify({"error": "That coffee time was not found (schedule may have changed)."}), 400
+            return None, ({"error": "That coffee time was not found (schedule may have changed)."}, 400)
         updates["coffee_windows"] = json.dumps(cwin2)
     elif op == "shift_meal":
         mwin = safe_json_parse(row.get("meal_windows")) or []
         hit, mwin2 = _shift_one_window_time(mwin, from_key, to_key)
         if not hit:
-            return jsonify({"error": "That meal time was not found (schedule may have changed)."}), 400
+            return None, ({"error": "That meal time was not found (schedule may have changed)."}, 400)
         updates["meal_windows"] = json.dumps(mwin2)
     elif op == "shift_bright":
         bwin = safe_json_parse(row.get("brightness_windows")) or []
         hit, bwin2 = _shift_one_window_time(bwin, from_key, to_key)
         if not hit:
-            return jsonify({"error": "That light time was not found (schedule may have changed)."}), 400
+            return None, ({"error": "That light time was not found (schedule may have changed)."}, 400)
         updates["brightness_windows"] = json.dumps(bwin2)
     elif op == "extend_sleep":
         delta = int(apply_op.get("delta_minutes") or 0)
         if delta < 0 or delta > 180:
-            return jsonify({"error": "Invalid delta"}), 400
+            return None, ({"error": "Invalid delta"}, 400)
         ss = row.get("sleep_start")
         if not ss:
-            return jsonify({"error": "Set sleep times first in Settings."}), 400
+            return None, ({"error": "Set sleep times first in Settings."}, 400)
         t = str_to_time(str(ss)[:8] if isinstance(ss, str) else str(ss))
         if not t:
-            return jsonify({"error": "Invalid sleep time"}), 400
+            return None, ({"error": "Invalid sleep time"}, 400)
         new_ss = _add_minutes_to_time_hhmm(time_to_str(t), -delta)
         updates["sleep_start"] = new_ss
     else:
-        return jsonify({"error": f"Unknown op: {op}"}), 400
+        return None, ({"error": f"Unknown op: {op}"}, 400)
 
     if not updates:
-        return jsonify({"error": "Nothing to update"}), 400
+        return None, ({"error": "Nothing to update"}, 400)
 
     supabase_client.table("constant_schedules").update(updates).eq("id", row_id).execute()
 
@@ -1298,7 +1334,7 @@ def apply_weekly_suggestion():
         .execute()
     )
     if not refreshed.data:
-        return jsonify({"error": "Update failed"}), 500
+        return None, ({"error": "Update failed"}, 500)
     out = dict(refreshed.data[0])
     for f in ("coffee_windows", "meal_windows", "brightness_windows"):
         out[f] = safe_json_parse(out.get(f))
@@ -1314,7 +1350,92 @@ def apply_weekly_suggestion():
             out.get("sleep_end"),
         )
 
-    return jsonify(out)
+    return (jsonify(out), None)
+
+
+def _apply_suggestion_index(user_id: str, urow: dict, idx: int) -> tuple:
+    """
+    Apply one suggestion by list index. Returns (flask_response, None) on success, or
+    (None, error_dict) for jsonify on failure. On success, rotating return uses dict ok+rotating;
+    constant returns full row dict.
+    """
+    items = _build_weekly_suggestion_items(user_id)
+    if idx < 0 or idx >= len(items):
+        return None, ({"error": "That suggestion is no longer available. Refresh the list."}, 400)
+    apply_op = (items[idx] or {}).get("apply")
+    if not apply_op or not apply_op.get("op"):
+        return None, ({"error": "No apply action for this item"}, 400)
+    return _apply_suggestion_apply_dict(user_id, urow, apply_op)
+
+
+@bp.route("/suggestions/apply", methods=["POST"])
+def apply_weekly_suggestion():
+    user_id, err = get_user_from_request()
+    if err:
+        return err
+
+    denied = require_pro_access(user_id)
+    if denied:
+        return denied
+
+    body = request.get_json(silent=True) or {}
+    urow = fetch_user_row_by_id(user_id)
+    if not urow:
+        return jsonify({"error": "User not found"}), 404
+
+    raw_multi = body.get("suggestion_indices")
+    if isinstance(raw_multi, list) and len(raw_multi) > 0:
+        index_set: set = set()
+        for x in raw_multi:
+            try:
+                i = int(x)
+                if i >= 0:
+                    index_set.add(i)
+            except (TypeError, ValueError):
+                continue
+        if not index_set:
+            return jsonify({"error": "suggestion_indices must be a list of non-negative indices"}), 400
+        # Snapshot apply payloads in one list build so indices stay stable while multiple updates run.
+        items = _build_weekly_suggestion_items(user_id)
+        applies: List[dict] = []
+        for i in sorted(index_set):
+            if i < len(items):
+                a = (items[i] or {}).get("apply")
+                if isinstance(a, dict) and a.get("op"):
+                    applies.append(a)
+        if not applies:
+            return jsonify({"error": "No valid suggestions for those indices. Refresh the list."}), 400
+        applied = 0
+        last_error: Optional[tuple] = None
+        had_rotating = False
+        for apply_op in applies:
+            res, err_t = _apply_suggestion_apply_dict(user_id, urow, apply_op)
+            if err_t is not None:
+                last_error = err_t
+                continue
+            applied += 1
+            urow = fetch_user_row_by_id(user_id) or urow
+            if res and hasattr(res, "get_json"):
+                rj = res.get_json(silent=True) or {}
+                if isinstance(rj, dict) and rj.get("rotating"):
+                    had_rotating = True
+        if applied == 0:
+            if last_error is not None:
+                return jsonify(last_error[0]), last_error[1]
+            return jsonify({"error": "Could not apply any suggestion"}), 400
+        return jsonify({"ok": True, "applied": applied, "rotating": had_rotating})
+
+    try:
+        idx = int(body.get("suggestion_index", body.get("index", -1)))
+    except (TypeError, ValueError):
+        idx = -1
+    if idx < 0:
+        return jsonify({"error": "suggestion_index required"}), 400
+
+    res, err_t = _apply_suggestion_index(user_id, urow, idx)
+    if err_t is not None:
+        return jsonify(err_t[0]), err_t[1]
+    return res
 
 
 @bp.route("/suggestions", methods=["GET"])
