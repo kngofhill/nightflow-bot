@@ -1399,6 +1399,65 @@
         return 'nf-week-day--ok';
     }
 
+    function formatRecWindowList(arr) {
+        if (!arr || !arr.length) {
+            return '<p class="nf-rec-empty">No suggested times here — your sleep window may be very short today.</p>';
+        }
+        return arr
+            .map(
+                (w) => `
+            <div class="nf-rec-slot">
+                <div class="nf-rec-slot-time">${escapeHtml(formatTime(w.time))}</div>
+                <div class="nf-rec-slot-msg">${escapeHtml((w && w.message) || '')}</div>
+            </div>`
+            )
+            .join('');
+    }
+
+    function openOffDayRecommendations(sched) {
+        const advice = sched.transition_advice
+            ? `<div class="nf-rec-advice"><p class="nf-rec-advice-text">${escapeHtml(sched.transition_advice)}</p></div>`
+            : '';
+        openModal(
+            `<div class="nf-rec-root">
+                <div class="nf-rec-hero">
+                    <div class="nf-rec-hero-moon" aria-hidden="true">🌙</div>
+                    <h2 class="nf-rec-title">Rest day plan</h2>
+                    <p class="nf-rec-sub">Recommended sleep, eating, caffeine, and light — tuned to today’s off pattern.</p>
+                </div>
+                ${advice}
+                <section class="nf-rec-section nf-rec-section--sleep">
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">😴</span> Recommended sleep</h3>
+                    <div class="nf-rec-sleep-pill">
+                        <span class="nf-rec-sleep-time">${escapeHtml(formatTime(sched.sleep_start))}</span>
+                        <span class="nf-rec-sleep-sep">→</span>
+                        <span class="nf-rec-sleep-time">${escapeHtml(formatTime(sched.sleep_end))}</span>
+                    </div>
+                    <p class="nf-rec-sec-note">Treat this as your main sleep anchor for recovery before the next work block.</p>
+                </section>
+                <section class="nf-rec-section">
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">☕</span> Coffee &amp; caffeine</h3>
+                    <p class="nf-rec-sec-note">Suggested windows — cut off caffeine several hours before you lie down.</p>
+                    <div class="nf-rec-slot-list">${formatRecWindowList(sched.coffee_windows)}</div>
+                </section>
+                <section class="nf-rec-section">
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">🍽</span> Eating</h3>
+                    <p class="nf-rec-sec-note">When to aim for meals — lighter toward bedtime.</p>
+                    <div class="nf-rec-slot-list">${formatRecWindowList(sched.meal_windows)}</div>
+                </section>
+                <section class="nf-rec-section">
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">💡</span> Light &amp; screens</h3>
+                    <p class="nf-rec-sec-note">Bright after wake; dim and softer screens as sleep approaches.</p>
+                    <div class="nf-rec-slot-list">${formatRecWindowList(sched.brightness_windows)}</div>
+                </section>
+                <button type="button" class="nf-cta nf-cta-secondary" id="nf-rec-done">Done</button>
+            </div>`,
+            { sheetClass: 'nf-rec-modal' }
+        );
+        const done = document.getElementById('nf-rec-done');
+        if (done) done.onclick = closeModal;
+    }
+
     function mockTransition() {
         return {
             headline: 'In 2 days, you switch to Day Shift',
@@ -1444,7 +1503,7 @@
                     <div class="nf-card-label">Today</div>
                     <div class="nf-today-line">${escapeHtml(formatLongDate(today).toUpperCase())}</div>
                     ${
-                        rotating && !isOff && (sched.pattern_slot || sched.pattern_id)
+                        rotating && (sched.pattern_slot || sched.pattern_id)
                             ? (() => {
                                   const pm = patternMetaFromId(sched.pattern_id);
                                   const sl = formatPatternSlot(sched.pattern_slot) || 'Today';
@@ -1470,10 +1529,37 @@
                 }`;
 
         if (isOff) {
+            const pmOff =
+                rotating && (sched.pattern_id || sched.pattern_slot)
+                    ? patternMetaFromId(sched.pattern_id)
+                    : null;
+            const slotLine =
+                rotating && sched.pattern_slot
+                    ? `${escapeHtml(formatPatternSlot(sched.pattern_slot))}${
+                          pmOff ? ' · ' + escapeHtml(pmOff.title) : ''
+                      }`
+                    : '';
+            const offLead = sched.transition_advice
+                ? escapeHtml(sched.transition_advice)
+                : 'No shift work today — focus on recovery sleep and gentle habits until your next block.';
             body += `
-                <div class="nf-card">
-                    <div class="nf-shift-title off">DAY OFF</div>
-                    <p class="nf-muted nf-center" style="margin:0;">No work scheduled today. Rest up.</p>
+                <div class="nf-card nf-off-card">
+                    <div class="nf-shift-title off">${rotating ? 'OFF DAY' : 'DAY OFF'}</div>
+                    ${
+                        slotLine
+                            ? `<p class="nf-off-slot-line"><span class="nf-off-slot-ico" aria-hidden="true">${escapeHtml(
+                                  pmOff ? pmOff.icon : '🌿'
+                              )}</span><span>${slotLine}</span></p>`
+                            : ''
+                    }
+                    <p class="nf-muted nf-off-lead">${offLead}</p>
+                    <div class="nf-off-sleep-strip">
+                        <span class="nf-off-sleep-k">Sleep focus</span>
+                        <span class="nf-off-sleep-v">${escapeHtml(formatTime(sched.sleep_start))} – ${escapeHtml(
+                formatTime(sched.sleep_end)
+            )}</span>
+                    </div>
+                    <button type="button" class="nf-cta" id="btn-off-rec">View recommendations</button>
                 </div>`;
         } else {
             const isFree = !hasProEntitlement();
@@ -1567,6 +1653,9 @@
 
         const proBtn = document.getElementById('btn-dash-pro');
         if (proBtn) proBtn.onclick = () => openProInvoice();
+
+        const offRec = document.getElementById('btn-off-rec');
+        if (offRec) offRec.onclick = () => openOffDayRecommendations(sched);
 
         const tr = document.getElementById('btn-dash-trans');
         if (tr) tr.onclick = () => go('transition', true);

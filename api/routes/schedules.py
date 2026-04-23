@@ -639,9 +639,11 @@ def today_daily():
     def _strip_free_windows(row_dict):
         if urow and not has_pro_entitlement(urow):
             row_dict = dict(row_dict)
-            row_dict["coffee_windows"] = []
-            row_dict["meal_windows"] = []
-            row_dict["brightness_windows"] = []
+            # Off/rest days: keep suggested coffee / meal / light windows (no shift work).
+            if row_dict.get("shift_type") != "off":
+                row_dict["coffee_windows"] = []
+                row_dict["meal_windows"] = []
+                row_dict["brightness_windows"] = []
         return row_dict
 
     if daily.data:

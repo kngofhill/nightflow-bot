@@ -2876,3 +2876,250 @@ ul.nf-tl.nf-timeline {
     font-weight: 600;
     color: var(--tg-theme-button-color, var(--nf-primary)) !important;
 }
+
+/* Dashboard: off / rest day card */
+.nf-off-card {
+    text-align: center;
+    padding-bottom: 16px;
+}
+
+.nf-off-slot-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    margin: 0 0 10px;
+    line-height: 1.35;
+}
+
+.nf-off-slot-ico {
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.nf-off-lead {
+    margin: 0 0 14px;
+    line-height: 1.45;
+    font-size: 0.88rem;
+    text-align: center;
+    padding: 0 4px;
+}
+
+.nf-off-sleep-strip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border-radius: var(--nf-radius-sm);
+    background: color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 8%, var(--tg-theme-secondary-bg-color, #2a2a3a));
+    border: 1px solid var(--nf-border);
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .nf-off-sleep-strip {
+        background: rgba(100, 181, 246, 0.08);
+    }
+}
+
+.nf-off-sleep-k {
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+
+.nf-off-sleep-v {
+    font-size: 1.05rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--tg-theme-button-color, var(--nf-primary));
+}
+
+.nf-off-card .nf-cta {
+    max-width: 20rem;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Rest day recommendations modal */
+.modal-sheet.nf-rec-modal {
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 12%, var(--tg-theme-bg-color, #12121a)) 0%,
+        var(--tg-theme-secondary-bg-color, var(--nf-surface)) 22%
+    ) !important;
+    border-top: 1px solid color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 25%, var(--nf-border));
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .modal-sheet.nf-rec-modal {
+        background: linear-gradient(180deg, rgba(100, 181, 246, 0.12), var(--nf-surface)) !important;
+    }
+}
+
+.nf-rec-root {
+    padding-bottom: 6px;
+}
+
+.nf-rec-hero {
+    text-align: center;
+    margin-bottom: 16px;
+    padding: 4px 0 12px;
+}
+
+.nf-rec-hero-moon {
+    font-size: 2.25rem;
+    line-height: 1;
+    margin-bottom: 8px;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.2));
+}
+
+.nf-rec-title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    margin: 0 0 6px;
+    letter-spacing: 0.02em;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-rec-sub {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    padding: 0 8px;
+}
+
+.nf-rec-advice {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border-radius: var(--nf-radius-sm);
+    border: 1px solid var(--nf-border);
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.15));
+}
+
+.nf-rec-advice-text {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-rec-section {
+    margin-bottom: 16px;
+    padding: 14px 14px 12px;
+    border-radius: var(--nf-radius);
+    border: 1px solid var(--nf-border);
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.12));
+    box-shadow: var(--nf-shadow-sm);
+}
+
+.nf-rec-section--sleep {
+    border-color: color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 28%, var(--nf-border));
+    background: color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 6%, var(--tg-theme-bg-color, #1a1a24));
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .nf-rec-section--sleep {
+        border-color: rgba(100, 181, 246, 0.25);
+        background: rgba(100, 181, 246, 0.06);
+    }
+}
+
+.nf-rec-sec-h {
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 8px;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nf-rec-sec-ico {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.nf-rec-sec-note {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0 0 10px;
+}
+
+.nf-rec-sleep-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 12px 10px;
+    border-radius: var(--nf-radius-sm);
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.04));
+    margin-bottom: 8px;
+}
+
+.nf-rec-sleep-time {
+    font-size: 1.15rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--tg-theme-button-color, var(--nf-primary));
+}
+
+.nf-rec-sleep-sep {
+    font-size: 0.95rem;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    font-weight: 600;
+}
+
+.nf-rec-slot-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nf-rec-slot {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px 10px;
+    border-radius: var(--nf-radius-sm);
+    border: 1px solid var(--nf-border);
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.03));
+}
+
+.nf-rec-slot-time {
+    font-size: 0.82rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--tg-theme-button-color, var(--nf-primary));
+    padding-top: 2px;
+}
+
+.nf-rec-slot-msg {
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-rec-empty {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    font-style: italic;
+}
+
+.nf-rec-root .nf-cta-secondary {
+    width: 100%;
+    margin-top: 4px;
+}

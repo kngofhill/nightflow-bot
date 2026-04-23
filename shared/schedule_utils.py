@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, time, timedelta, date
-from typing import Dict, Any, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 
 def str_to_time(time_str: str) -> Optional[time]:
@@ -177,6 +177,119 @@ def calculate_optimal_schedule(
         "brightness_windows": brightness_windows,
         "shift_type": shift_type
     }
+
+
+def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Gentle coffee / meal / light suggestions for a rest (off) day, anchored to the
+    recommended main sleep window only (no work times).
+    """
+    ss = str_to_time(str(sleep_start_str or "")[:8]) or time(22, 0)
+    se = str_to_time(str(sleep_end_str or "")[:8]) or time(6, 0)
+    d0 = date(2020, 1, 1)
+    bed = datetime.combine(d0, ss)
+    wake = datetime.combine(d0, se)
+    if wake <= bed:
+        wake += timedelta(days=1)
+    awake_start = wake
+    awake_end = bed + timedelta(days=1)
+    span_h = max(0.0, (awake_end - awake_start).total_seconds() / 3600.0)
+
+    def _t(dt: datetime) -> str:
+        return dt.strftime("%H:%M")
+
+    coffee: List[Dict[str, Any]] = []
+    meals: List[Dict[str, Any]] = []
+    bright: List[Dict[str, Any]] = []
+
+    last_caffeine = awake_end - timedelta(hours=8)
+    c1: Optional[datetime] = None
+    if span_h >= 2.5:
+        c1 = awake_start + timedelta(hours=1, minutes=30)
+        if c1 < last_caffeine - timedelta(minutes=30):
+            coffee.append(
+                {
+                    "time": _t(c1),
+                    "message": "☕ First coffee — after you’re truly awake. Skip if you’re still groggy.",
+                    "type": "rest_day",
+                }
+            )
+        if span_h >= 7 and c1 is not None:
+            c2 = awake_start + timedelta(hours=5)
+            if c2 < last_caffeine - timedelta(hours=1) and c2 > c1 + timedelta(hours=2):
+                coffee.append(
+                    {
+                        "time": _t(c2),
+                        "message": "☕ Optional second cup — keep before your wind-down window.",
+                        "type": "rest_day",
+                    }
+                )
+
+    m1_dt: Optional[datetime] = None
+    if span_h >= 3:
+        m1_dt = awake_start + timedelta(hours=1)
+        meals.append(
+            {
+                "time": _t(m1_dt),
+                "message": "🍽 Main meal — steady protein; lighter than a heavy “celebration” dinner.",
+                "type": "rest_day",
+            }
+        )
+    if span_h >= 8 and m1_dt is not None:
+        m2 = awake_start + timedelta(hours=span_h / 2)
+        if m2 > m1_dt + timedelta(hours=3) and m2 < awake_end - timedelta(hours=4):
+            meals.append(
+                {
+                    "time": _t(m2),
+                    "message": "🥗 Mid-awake fuel — avoid your heaviest meal within 3h of bed.",
+                    "type": "rest_day",
+                }
+            )
+    if span_h >= 5:
+        m3 = awake_end - timedelta(hours=4)
+        ok = True
+        if m1_dt is not None and m3 <= m1_dt + timedelta(hours=2):
+            ok = False
+        if ok and m3 < awake_end - timedelta(hours=2) and m3 > awake_start:
+            meals.append(
+                {
+                    "time": _t(m3),
+                    "message": "🍽 Earlier dinner — finish eating a few hours before lying down.",
+                    "type": "rest_day",
+                }
+            )
+
+    if span_h >= 1.5:
+        bright.append(
+            {
+                "time": _t(awake_start + timedelta(minutes=20)),
+                "message": "☀️ Bright light soon after waking — anchors your clock for the day.",
+                "type": "bright",
+                "action": "increase_light",
+            }
+        )
+        dim = awake_end - timedelta(hours=2)
+        if dim > awake_start + timedelta(hours=1):
+            bright.append(
+                {
+                    "time": _t(dim),
+                    "message": "🌙 Start dimming lights — tells your brain sleep is coming.",
+                    "type": "dim",
+                    "action": "dim_lights",
+                }
+            )
+        ns = awake_end - timedelta(minutes=30)
+        if ns > awake_start + timedelta(hours=2):
+            bright.append(
+                {
+                    "time": _t(ns),
+                    "message": "📵 Wind-down — softer screens and lower light before bed.",
+                    "type": "no_screens",
+                    "action": "no_screens",
+                }
+            )
+
+    return {"coffee_windows": coffee, "meal_windows": meals, "brightness_windows": bright}
 
 
 def is_within_caffeine_window(sleep_start: time, current_time: time) -> bool:

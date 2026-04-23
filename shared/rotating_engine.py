@@ -10,7 +10,13 @@ import json
 from datetime import date, time
 from typing import Any, Dict, List, Optional, Tuple
 
-from shared.schedule_utils import calculate_optimal_schedule, str_to_time, time_to_str, safe_json_parse
+from shared.schedule_utils import (
+    calculate_optimal_schedule,
+    rest_day_habit_windows,
+    safe_json_parse,
+    str_to_time,
+    time_to_str,
+)
 
 PITMAN_2_2_3: List[str] = [
     "night", "night", "off", "off", "night", "night", "night",
@@ -341,17 +347,29 @@ def build_rotating_day(
                 ]
             else:
                 extra_b = []
-            b = _off_style(d, sl, se, adv3, [], [], extra_b)
+            hab = rest_day_habit_windows(sl, se)
+            bright_merged = list(hab["brightness_windows"]) + extra_b
+            b = _off_style(d, sl, se, adv3, hab["coffee_windows"], hab["meal_windows"], bright_merged)
             b.update(out_meta)
             return b
         if pattern_id == "block_rotation":
             sl, se = "08:00", "16:00"
             adv3 = "Off day — use night rest sleep; next work block is nights."
-        b = _off_style(d, sl, se, adv3, [], [], [])
+        hab = rest_day_habit_windows(sl, se)
+        b = _off_style(
+            d,
+            sl,
+            se,
+            adv3,
+            hab["coffee_windows"],
+            hab["meal_windows"],
+            hab["brightness_windows"],
+        )
         b.update(out_meta)
         return b
 
-    b = _off_style(d, "22:00", "06:00", None, [], [], [])
+    hab0 = rest_day_habit_windows("22:00", "06:00")
+    b = _off_style(d, "22:00", "06:00", None, hab0["coffee_windows"], hab0["meal_windows"], hab0["brightness_windows"])
     b.update(out_meta)
     return b
 
