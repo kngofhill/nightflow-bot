@@ -78,7 +78,7 @@
         rotatingPattern: null,
         /** true after "Switch to permanent" until a constant schedule exists (optional UI hint) */
         finishingConstantSetup: false,
-        /** set when opening onboarding from settings / rebuild — shows Back to settings */
+        /** set when opening onboarding from settings — shows Back to settings */
         onboardingFromSettings: false,
         /** 1, 3, or 7 — full schedule range (Pro) */
         fullScheduleRange: 1,
@@ -460,6 +460,37 @@
         if (!t || typeof t !== 'string') return 0;
         const [h, m] = t.split(':').map(Number);
         return (h || 0) * 60 + (m || 0);
+    }
+
+    /**
+     * Work and sleep as half-open [start, end) minute ranges on a 24h loop.
+     * Returns true if they share any time (e.g. work 0:00–8:00 vs sleep 6:00–14:00).
+     */
+    function timeRangeToSegments(startStr, endStr) {
+        const a = parseTimeToMinutes(String(startStr || '00:00').slice(0, 5));
+        const b = parseTimeToMinutes(String(endStr || '00:00').slice(0, 5));
+        if (b > a) return [[a, b]];
+        if (b < a) return [[a, 1440], [0, b]];
+        return [[0, 1440]];
+    }
+
+    function segmentsOverlapHalfOpen(segmentsA, segmentsB) {
+        for (const [a0, a1] of segmentsA) {
+            for (const [b0, b1] of segmentsB) {
+                if (a0 < b1 && b0 < a1) return true;
+            }
+        }
+        return false;
+    }
+
+    /** @returns {string|null} User-facing error, or null if ok */
+    function workSleepOverlapError(workStart, workEnd, sleepStart, sleepEnd) {
+        const w = timeRangeToSegments(workStart, workEnd);
+        const s = timeRangeToSegments(sleepStart, sleepEnd);
+        if (segmentsOverlapHalfOpen(w, s)) {
+            return "Work and sleep can’t overlap. For example, if you work 0:00–8:00, don’t set sleep 6:00–14:00. Adjust your windows so they don’t sit on top of each other.";
+        }
+        return null;
     }
 
     function minutesUntilShiftEnd(workStart, workEnd) {
@@ -931,6 +962,7 @@
                     <div class="nf-row"><span>Start</span>${selectTimeHtml('sleep_start', '08:00', 'ss')}</div>
                     <div class="nf-row" style="margin-top:10px;"><span>End</span>${selectTimeHtml('sleep_end', '16:00', 'se')}</div>
                 </div>
+                <p class="nf-hint-validate">Work and sleep are checked so they can’t overlap on the same day.</p>
                 <button type="button" class="nf-cta" id="btn-create-const">Create schedule</button>
             </div>`;
         document.getElementById('btn-sp-back').onclick = () => {
@@ -944,6 +976,11 @@
             const we = document.getElementById('we').value;
             const ss = document.getElementById('ss').value;
             const se = document.getElementById('se').value;
+            const overlap = workSleepOverlapError(ws, we, ss, se);
+            if (overlap) {
+                tg.showAlert(overlap);
+                return;
+            }
             renderLoading();
             try {
                 await api('/users/me', {
@@ -1035,6 +1072,7 @@
                     <div><strong>😴 OFF</strong><div class="nf-muted" style="margin-top:6px;">Handled by the pattern; sleep aligns to the next shift.</div></div>
                 </div>
                 <button type="button" class="nf-cta" id="btn-create-rot">CREATE SCHEDULE</button>
+                <p class="nf-hint-validate">For each template, work and sleep can’t overlap — you’ll be asked to fix it before saving.</p>
                 <p class="nf-sub nf-center">Saves to your account. Today’s plan updates from the pattern.</p>
             </div>`;
         document.getElementById('btn-sr-back').onclick = () => {
@@ -1068,22 +1106,40 @@
                 tg.showAlert('Pick a pattern start date');
                 return;
             }
+            const nWs = document.getElementById('rn_ws').value;
+            const nWe = document.getElementById('rn_we').value;
+            const nSs = document.getElementById('rn_ss').value;
+            const nSe = document.getElementById('rn_se').value;
+            const oN = workSleepOverlapError(nWs, nWe, nSs, nSe);
+            if (oN) {
+                tg.showAlert('Night template: ' + oN);
+                return;
+            }
             const body = {
                 pattern_id: patternId,
                 pattern_start_date: start,
                 night: {
-                    work_start: document.getElementById('rn_ws').value,
-                    work_end: document.getElementById('rn_we').value,
-                    sleep_start: document.getElementById('rn_ss').value,
-                    sleep_end: document.getElementById('rn_se').value,
+                    work_start: nWs,
+                    work_end: nWe,
+                    sleep_start: nSs,
+                    sleep_end: nSe,
                 },
             };
             if (patternId !== 'pat_4n4o') {
+                const dWs = document.getElementById('rd_ws').value;
+                const dWe = document.getElementById('rd_we').value;
+                const dSs = document.getElementById('rd_ss').value;
+                const dSe = document.getElementById('rd_se').value;
+                const oD = workSleepOverlapError(dWs, dWe, dSs, dSe);
+                if (oD) {
+                    tg.showAlert('Day template: ' + oD);
+                    return;
+                }
                 body.day = {
-                    work_start: document.getElementById('rd_ws').value,
-                    work_end: document.getElementById('rd_we').value,
-                    sleep_start: document.getElementById('rd_ss').value,
-                    sleep_end: document.getElementById('rd_se').value,
+                    work_start: dWs,
+                    work_end: dWe,
+                    sleep_start: dSs,
+                    sleep_end: dSe,
                 };
             }
             if (patternId === 'block_rotation') {
@@ -2130,27 +2186,15 @@
                         <button type="button" class="nf-btn-edit" id="ed-li">Edit</button>
                     </div>
                     <div class="nf-card">${lightSummary(sched)}</div>
-                </div>
-                <div class="nf-card" style="margin:12px 0 0;">
-                    <p class="nf-muted" style="font-size:0.84rem;margin:0 0 10px;line-height:1.4;">
-                        Rebuild coffee, meal &amp; light from your <strong>current</strong> work &amp; sleep
-                        (Work &amp; sleep <strong>EDIT</strong> alone does not).
-                    </p>
-                    <button type="button" class="nf-cta" id="btn-rebuild-rec">↻ Rebuild recommended schedule</button>
                 </div>`;
-        const switchToRotatingCard =
-            !isRotatingServer() && (state.userRow?.shift_type === 'constant' || !state.userRow?.shift_type)
-                ? `<div class="nf-card nf-settings-action-card">
-                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Rotating schedule</h3>
-                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Use 2-2-3, block rotation, or 4-4-4-4. Your current fixed hours will be replaced by a pattern you choose next.</p>
-                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-switch-rot">Switch to rotating</button>
-                   </div>`
-                : '';
-        const switchToPermanentCard = isRotatingServer()
-            ? `<div class="nf-card nf-settings-action-card">
-                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Permanent schedule</h3>
-                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;">Use the same work and sleep hours on every work day. Your rotating pattern will be turned off — you’ll set a new fixed schedule on the next screen.</p>
-                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-switch-const">Switch to permanent</button>
+        const showScheduleTypeCard =
+            (!isRotatingServer() && (state.userRow?.shift_type === 'constant' || !state.userRow?.shift_type)) ||
+            isRotatingServer();
+        const scheduleTypeCard = showScheduleTypeCard
+            ? `<div class="nf-card nf-settings-action-card nf-card-schedule-type">
+                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Schedule type</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.4;">Open the first step to use a <strong>permanent</strong> (fixed) schedule or a <strong>rotating</strong> pattern. Your current setup stays until you continue on the next screen.</p>
+                        <button type="button" class="nf-cta-secondary nf-btn-block" id="btn-change-schedule-type">Change schedule type</button>
                    </div>`
             : '';
         $root.innerHTML = `
@@ -2164,8 +2208,7 @@
                 ${trialPayBlock}
                 ${workSleepBlock}
                 ${planWindowsBlock}
-                ${switchToRotatingCard}
-                ${switchToPermanentCard}
+                ${scheduleTypeCard}
                 <p class="nf-field-label">⏰ NOTIFICATIONS</p>
                 <div class="nf-card">
                     ${toggleRow('🔔 All Notifications', 'notifAll', s.notifAll)}
@@ -2201,13 +2244,9 @@
         document.getElementById('bst').onclick = back;
         const btnStars = document.getElementById('btn-settings-stars');
         if (btnStars) btnStars.onclick = () => openProInvoice();
-        const bsr = document.getElementById('btn-switch-rot');
-        if (bsr) {
-            bsr.onclick = () => goToScheduleTypePicker();
-        }
-        const bsc = document.getElementById('btn-switch-const');
-        if (bsc) {
-            bsc.onclick = () => goToScheduleTypePicker();
+        const btnSchedType = document.getElementById('btn-change-schedule-type');
+        if (btnSchedType) {
+            btnSchedType.onclick = () => goToScheduleTypePicker();
         }
         if (isRotatingServer()) {
             const ern = document.getElementById('ed-rot-n');
@@ -2233,10 +2272,6 @@
             if (om) om.onclick = () => openEditMeals();
             const ol = document.getElementById('ed-li');
             if (ol) ol.onclick = () => openEditLight();
-        }
-        const btnRe = document.getElementById('btn-rebuild-rec');
-        if (btnRe) {
-            btnRe.onclick = () => goToScheduleTypePicker();
         }
         const cancelSub = document.getElementById('btn-cancel-sub');
         if (cancelSub) {
@@ -2382,20 +2417,6 @@
         return bw.map((w) => w.time).join(' · ') || '—';
     }
 
-    /** Work/sleep JSON for POST /schedules/constant (full recommit with optimization). */
-    function workSleepPayloadForRebuild(sched) {
-        const pick = (t, fallback) => {
-            const s = formatTime(t);
-            return s && s !== '--:--' ? s : fallback;
-        };
-        return {
-            work_start: pick(sched?.work_start, '22:00'),
-            work_end: pick(sched?.work_end, '06:00'),
-            sleep_start: pick(sched?.sleep_start, '08:00'),
-            sleep_end: pick(sched?.sleep_end, '16:00'),
-        };
-    }
-
     function openEditRotatingWindows(shift, kind) {
         if (!isRotatingServer() || !state.rotatingPattern) {
             tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
@@ -2518,12 +2539,21 @@
         document.getElementById('m-close-rt').onclick = closeModal;
         document.getElementById('m-canrt').onclick = closeModal;
         document.getElementById('m-savert').onclick = async () => {
+            const wss = document.getElementById('rt-ws').value;
+            const wse = document.getElementById('rt-we').value;
+            const sss = document.getElementById('rt-ss').value;
+            const sse = document.getElementById('rt-se').value;
+            const o = workSleepOverlapError(wss, wse, sss, sse);
+            if (o) {
+                tg.showAlert(o);
+                return;
+            }
             const payload = {
                 [which === 'day' ? 'day' : 'night']: {
-                    work_start: document.getElementById('rt-ws').value,
-                    work_end: document.getElementById('rt-we').value,
-                    sleep_start: document.getElementById('rt-ss').value,
-                    sleep_end: document.getElementById('rt-se').value,
+                    work_start: wss,
+                    work_end: wse,
+                    sleep_start: sss,
+                    sleep_end: sse,
                 },
             };
             closeModal();
@@ -2572,8 +2602,7 @@
             <p class="nf-field-label">😴 SLEEP</p>
             <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'ms-s')}</div>
             <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'ms-e')}</div>
-            <p class="nf-sub">Work &amp; sleep only. For new coffee, meal, and light, use
-                <strong>Rebuild recommended schedule</strong> (below light reminders in Settings).</p>
+            <p class="nf-sub">Work &amp; sleep only. Edit coffee, meal, and light in the sections above. To switch permanent/rotating, use <strong>Change schedule type</strong> in Settings.</p>
             <div class="nf-row-btns">
                 <button type="button" class="nf-cta" id="m-save">SAVE</button>
                 <button type="button" class="nf-cta nf-cta-secondary" id="m-can">CANCEL</button>
@@ -2581,11 +2610,20 @@
         document.getElementById('m-close').onclick = closeModal;
         document.getElementById('m-can').onclick = closeModal;
         document.getElementById('m-save').onclick = async () => {
+            const wss = document.getElementById('mw-s').value;
+            const wse = document.getElementById('mw-e').value;
+            const sss = document.getElementById('ms-s').value;
+            const sse = document.getElementById('ms-e').value;
+            const o = workSleepOverlapError(wss, wse, sss, sse);
+            if (o) {
+                tg.showAlert(o);
+                return;
+            }
             const payload = {
-                work_start: document.getElementById('mw-s').value,
-                work_end: document.getElementById('mw-e').value,
-                sleep_start: document.getElementById('ms-s').value,
-                sleep_end: document.getElementById('ms-e').value,
+                work_start: wss,
+                work_end: wse,
+                sleep_start: sss,
+                sleep_end: sse,
             };
             closeModal();
             renderLoading();
@@ -3110,9 +3148,9 @@
         const slider = (id, label, minL, maxL) => {
             const rid = `nf-r-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
             return `
-            <div class="nf-slider-block">
+            <div class="nf-slider-block nf-summary-slider">
                 <div class="nf-slider-label">
-                    <span>${escapeHtml(label)}</span>
+                    <span>${label}</span>
                     <output class="nf-range-val" for="${rid}">2</output>
                 </div>
                 <input type="range" class="nf-range" id="${rid}" min="1" max="4" value="2" step="1" data-k="${id}" />
@@ -3120,43 +3158,66 @@
             </div>`;
         };
 
-        let html = `
-            <div class="nf-screen">
+        const dateLong = d.toLocaleDateString(undefined, {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+        });
+
+        let body = '';
+        body += `<div class="nf-summary-hero">
+            <div class="nf-summary-hero-ico" aria-hidden="true">🌙</div>
+            <h2 class="nf-summary-hero-title">End of shift</h2>
+            <p class="nf-summary-hero-date">${escapeHtml(dateLong)}</p>
+            <p class="nf-summary-hero-sub">Quick check-in for your week view. Use the scales; add detail if you want.</p>
+        </div>`;
+
+        body += `<div class="nf-card nf-summary-card">
+            <p class="nf-summary-section-kicker">How it went</p>
+            <h3 class="nf-summary-section-h">Energy &amp; sleep</h3>
+            ${slider('energy', 'Energy (right now)', '😴', '⚡')}
+            ${slider('sleepq', 'Sleep quality (last rest)', '😴', '😊')}
+        </div>`;
+
+        if (coffees.length) {
+            let block = `<p class="nf-summary-section-kicker">Scheduled slots</p>
+            <h3 class="nf-summary-section-h">Coffee</h3>
+            <p class="nf-summary-section-desc">Adherence: missed left → on track right</p>`;
+            coffees.forEach((c, i) => {
+                const lab = escapeHtml(`Coffee @ ${formatTime(c.time)}`);
+                block += slider(`co-${i}`, lab, '❌', '✅');
+            });
+            body += `<div class="nf-card nf-summary-card">${block}</div>`;
+        }
+        if (meals.length) {
+            let block = `<p class="nf-summary-section-kicker">Scheduled slots</p>
+            <h3 class="nf-summary-section-h">Meals</h3>
+            <p class="nf-summary-section-desc">Adherence: missed left → on track right</p>`;
+            meals.forEach((m, i) => {
+                const lab = escapeHtml(`Meal @ ${formatTime(m.time)}`);
+                block += slider(`me-${i}`, lab, '❌', '✅');
+            });
+            body += `<div class="nf-card nf-summary-card">${block}</div>`;
+        }
+        if (!coffees.length && !meals.length) {
+            body += `<p class="nf-summary-inline-note nf-muted">No coffee or meal times on today’s plan — you can still log energy and sleep below.</p>`;
+        }
+
+        $root.innerHTML = `
+            <div class="nf-screen nf-summary-screen">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="bsum">← BACK</button>
-                    <h1>End of Shift</h1>
+                    <h1>Check-in</h1>
                     <span></span>
                 </div>
-                <p class="nf-week-head">📅 ${escapeHtml(
-                    d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
-                )}</p>
-                ${slider('energy', 'ENERGY', '😴', '⚡')}
-        `;
-
-        coffees.forEach((c, i) => {
-            html += slider(
-                `co-${i}`,
-                `COFFEE (${escapeHtml(c.time)})`,
-                '❌',
-                '✅'
-            );
-        });
-        meals.forEach((m, i) => {
-            html += slider(
-                `me-${i}`,
-                `MEAL (${escapeHtml(m.time)})`,
-                '❌',
-                '✅'
-            );
-        });
-
-        html += `
-                ${slider('sleepq', 'SLEEP QUALITY', '😴', '😊')}
-                <button type="button" class="nf-cta" id="btn-save-sum">SAVE SUMMARY</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more" style="margin-top:10px;">TELL ME MORE</button>
+                <div class="nf-summary-body">
+                ${body}
+                </div>
+                <div class="nf-summary-actions">
+                    <button type="button" class="nf-cta" id="btn-save-sum">Save check-in</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more">More detail</button>
+                </div>
             </div>`;
-
-        $root.innerHTML = html;
         $root.querySelectorAll('input.nf-range').forEach((el) => {
             const id = el.getAttribute('id');
             const out = $root.querySelector(`output[for="${id}"]`);
