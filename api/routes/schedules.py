@@ -143,7 +143,7 @@ def upsert_rotating():
     name = (data.get("pattern_name") or sh.get("patternName") or pid)[:200]
     c_len = int(data.get("cycle_days") or sh.get("cycleLen") or _cycle_len_for_shifts({**sh, "pattern_id": pid}))
 
-    sh = {**sh, "pattern_id": pid}
+    sh = {**sh, "pattern_id": pid, "pattern_start_date": str(start)[:10]}
     if "night" in sh and isinstance(sh["night"], dict):
         for k, v in list(sh["night"].items()):
             if v is not None and k in ("work_start", "work_end", "sleep_start", "sleep_end") and v != "":
@@ -257,6 +257,8 @@ def patch_rotating():
     if not _valid_rotating_pattern_id(pid):
         return jsonify({"error": "Invalid pattern_id", "code": "invalid_pattern"}), 400
     sh["pattern_id"] = pid
+    if pstart:
+        sh["pattern_start_date"] = str(pstart)[:10]
 
     if not pattern_includes_day_work(pid, int(sh.get("block_days", 14) or 0), sh) and "day" in sh:
         sh["day"] = None

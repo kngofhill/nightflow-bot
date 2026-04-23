@@ -400,13 +400,32 @@ def _as_date(d: Any, fallback: date) -> date:
     return fallback
 
 
+# If pattern_start_date is NULL/missing, do *not* fall back to `local_day` (the day being
+# resolved): that made every day use "today" as the anchor, so the cycle index was always 0
+# and Monday vs Thursday (etc.) was ignored. Use a fixed epoch only for broken legacy rows.
+PATTERN_START_FALLBACK = date(2000, 1, 1)
+
+
+def _parse_pattern_start_date(row: Dict[str, Any], sh: Dict[str, Any]) -> date:
+    """
+    Calendar day that maps to index 0 of the pattern sequence (e.g. for Pitman, the first
+    "night" in the built-in 14-day array). Shifts by whole days relative to this anchor.
+    """
+    raw: Any = row.get("pattern_start_date") or sh.get("pattern_start_date") or sh.get(
+        "patternStartDate"
+    )
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        return PATTERN_START_FALLBACK
+    return _as_date(raw, PATTERN_START_FALLBACK)
+
+
 def build_rotating_day_from_pattern_row(
     row: Dict[str, Any], local_day: date
 ) -> Optional[Dict[str, Any]]:
     if not row:
         return None
     sh = _coerce_shifts_payload(row.get("shifts"))
-    start = _as_date(row.get("pattern_start_date"), local_day)
+    start = _parse_pattern_start_date(row, sh)
     pid = str(
         sh.get("pattern_id")
         or sh.get("patternName")

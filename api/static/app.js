@@ -1119,10 +1119,11 @@
                     <h1>Rotating schedule</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
-                <p class="nf-field-label nf-field-label--loose">When does this pattern start?</p>
+                <p class="nf-field-label nf-field-label--loose">Where should the cycle begin?</p>
                 <div class="nf-card nf-card--inset">
                     <input type="date" id="rot-start" class="nf-select" value="${today}" />
                 </div>
+                <p class="nf-muted nf-rot-pick-hint nf-rot-anchor-hint">This <strong>anchor date</strong> is day 1 of the built-in sequence (e.g. Pitman: two night shifts first). The same pattern <strong>lines up on different weekdays</strong> if you set this to Monday vs Thursday — each calendar day moves you one step in the cycle.</p>
                 <p class="nf-field-label nf-field-label--loose">Choose a rotation</p>
                 <p class="nf-muted nf-rot-pick-hint">Tap a card. Each one repeats on a fixed cycle; your work/sleep times below are templates.</p>
                 <div class="nf-pattern-grid" id="rot-pattern-grid" role="radiogroup" aria-label="Rotation pattern">
@@ -2318,6 +2319,7 @@
                             <span class="nf-pattern-stat-v">${escapeHtml(pStartNice)}</span>
                         </div>
                     </div>
+                    <p class="nf-pattern-info-anchor-hint">The pattern moves forward <strong>one calendar day at a time</strong> from this anchor. If work/off days look wrong, use <strong>Change schedule type</strong> below and set the anchor to the first day of your real rotation.</p>
                 </div>`
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">

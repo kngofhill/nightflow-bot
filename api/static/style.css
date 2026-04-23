@@ -2855,6 +2855,20 @@ ul.nf-tl.nf-timeline {
     color: var(--nf-text);
 }
 
+.nf-pattern-info-anchor-hint {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 10px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--nf-border);
+}
+
+.nf-rot-anchor-hint {
+    margin-top: 6px !important;
+    margin-bottom: 4px !important;
+}
+
 .nf-day-meta--pat {
     font-size: 0.82rem;
     line-height: 1.4;
