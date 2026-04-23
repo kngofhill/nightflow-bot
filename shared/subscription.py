@@ -336,7 +336,7 @@ def explain_cannot_cancel_star_subscription(
         lines.append("• Your paid Pro period has already ended.")
     if len(lines) == 2:
         lines.append(
-            "• You can also try: mini-app → Settings → “Cancel Subscription” (same action as /cancel)."
+            "• Auto-renewal can only be stopped from this bot chat: send /cancel here (not from the mini app)."
         )
     return "\n".join(lines)
 

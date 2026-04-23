@@ -77,5 +77,5 @@ def format_telegram_cancel_subscription_error(raw_or_exc: object) -> str:
         parts.append("• The bot may not be allowed to change this user’s Star subscription.")
     if "bad request" in low or "400" in s:
         parts.append("• Request rejected by Telegram — check BotFather: Stars + payments, and a current Bot API build.")
-    parts.append("You can try again or use the mini-app: Settings → Cancel Subscription.")
+    parts.append("You can try /cancel in this bot chat again in a few minutes, or message support with the error above.")
     return "\n".join(parts)

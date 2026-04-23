@@ -306,7 +306,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stop Telegram Stars auto-renewal (same as mini-app). Keeps Pro until pro_expires_at."""
+    """Stop Telegram Stars auto-renewal. Keeps Pro until pro_expires_at."""
     tid = update.effective_user.id
     row = get_user_by_telegram_id(tid) or {}
     meta = subscription_meta_for_user(row)
@@ -383,8 +383,7 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
         return
 
     await update.message.reply_text(
-        f"Auto-renewal is off. You keep Nightflow Pro until {pe} (no more automatic Star charges for this plan after that, unless you subscribe again).\n"
-        f"Tip: mini-app → Settings → Cancel Subscription does the same thing."
+        f"Auto-renewal is off. You keep Nightflow Pro until {pe} (no more automatic Star charges for this plan after that, unless you subscribe again)."
     )
 
 

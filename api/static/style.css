@@ -1813,6 +1813,16 @@ input[type="date"]:focus {
     background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.03));
 }
 
+.nf-billing-box .nf-code-inline {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.88em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--tg-theme-hint-color, var(--nf-border));
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
 .nf-btn-cancel-sub {
     width: 100%;
     border-color: var(--nf-muted) !important;

@@ -2572,8 +2572,7 @@
         const billingBlock = canCancel
             ? `<div class="nf-card nf-billing-box">
                     <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 Pro billing</h3>
-                    <p class="nf-muted" style="margin:0 0 12px;font-size:0.86rem;">Recurring in Telegram. Cancel to stop future Star charges. You keep Pro until your current period ends.</p>
-                    <button type="button" class="nf-btn-cancel-sub-pretty" id="btn-cancel-sub">Cancel subscription</button>
+                    <p class="nf-muted" style="margin:0;font-size:0.86rem;line-height:1.45;">Recurring in Telegram. To <strong>stop auto-renewal</strong>, open the <strong>Nightflow bot</strong> in Telegram and send <code class="nf-code-inline">/cancel</code> there. You keep Pro until the end of your paid period.</p>
                 </div>`
             : subCancelled && proExp
             ? `<p class="nf-billing-notice">Your subscription will not renew. You keep Pro access until <strong>${escapeHtml(
@@ -2810,46 +2809,6 @@
             if (om) om.onclick = () => openEditMeals();
             const ol = document.getElementById('ed-li');
             if (ol) ol.onclick = () => openEditLight();
-        }
-        const cancelSub = document.getElementById('btn-cancel-sub');
-        if (cancelSub) {
-            cancelSub.onclick = async () => {
-                if (
-                    !window.confirm(
-                        'Stop automatic renewals? You keep Pro access until the end of your current period.'
-                    )
-                ) {
-                    return;
-                }
-                try {
-                    const res = await api(`/cancel-subscription?telegram_id=${user.id}`, {
-                        method: 'POST',
-                        json: {},
-                    });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                        const parts = [
-                            data.error,
-                            data.explanation,
-                            data.details,
-                        ].filter(Boolean);
-                        tg.showAlert(parts.length ? parts.join('\n\n') : 'Could not cancel subscription');
-                        return;
-                    }
-                    if (data.user) {
-                        state.userRow = { ...state.userRow, ...data.user };
-                        applyUserSettingsFromUserRow(state.userRow);
-                    } else {
-                        const ur = await api(`/users/me?telegram_id=${user.id}`);
-                        if (ur.ok) state.userRow = await ur.json();
-                    }
-                    tg.showAlert(data.message || 'Your subscription will not renew.');
-                    render();
-                } catch (e) {
-                    console.error(e);
-                    tg.showAlert('Request failed');
-                }
-            };
         }
         document.getElementById('save-all').onclick = async () => {
             const tzSel = document.getElementById('tz-select');
