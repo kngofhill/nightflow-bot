@@ -1024,11 +1024,57 @@
     }
 
     const PATTERN_PRESETS = [
-        { label: '2-2-3 (Pitman) — 14d', value: 'pitman_2_2_3' },
-        { label: 'Block: nights, then days (optionally off)', value: 'block_rotation' },
-        { label: '4n / 4off / 4d / 4off — 16d', value: 'pat_4n4o4d4o' },
-        { label: '4n / 4off (nights only) — 8d', value: 'pat_4n4o' },
+        {
+            value: 'pitman_2_2_3',
+            title: '2-2-3 (Pitman)',
+            sub: 'Two on, two off, three on — then day block. Very common in hospitals.',
+            days: '14-day cycle',
+            icon: '🔀',
+        },
+        {
+            value: 'block_rotation',
+            title: 'Block rotation',
+            sub: 'Run nights, then days, then rest — you set how long each block is.',
+            days: 'Custom length',
+            icon: '⬛',
+        },
+        {
+            value: 'pat_4n4o4d4o',
+            title: '4–4 / 4–4',
+            sub: 'Four night shifts, four off, four day, four off — 16-day loop.',
+            days: '16-day cycle',
+            icon: '🔁',
+        },
+        {
+            value: 'pat_4n4o',
+            title: '4 on / 4 off (nights)',
+            sub: 'Four night shifts, then four days off. No day block.',
+            days: '8-day cycle',
+            icon: '🌙',
+        },
     ];
+
+    function patternMetaFromId(id) {
+        const raw = id == null ? '' : String(id);
+        const m = PATTERN_PRESETS.find((p) => p.value === raw);
+        if (m) return m;
+        return {
+            value: raw,
+            title: raw ? raw.replace(/_/g, ' ') : 'Pattern',
+            sub: 'Rotating schedule',
+            days: '',
+            icon: '📅',
+        };
+    }
+
+    function formatPatternSlot(slot) {
+        if (slot == null || slot === '') return '';
+        const s = String(slot).toLowerCase();
+        if (s === 'night') return 'Night';
+        if (s === 'day') return 'Day';
+        if (s === 'off') return 'Off day';
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    }
 
     function renderSetupRotating() {
         const today = new Date().toISOString().slice(0, 10);
@@ -1037,41 +1083,90 @@
             <div class="nf-screen">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="btn-sr-back">← Back</button>
-                    <h1>Rotating Setup</h1>
+                    <h1>Rotating schedule</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
-                <p class="nf-field-label">📅 START DATE</p>
-                <div class="nf-card">
+                <p class="nf-field-label nf-field-label--loose">When does this pattern start?</p>
+                <div class="nf-card nf-card--inset">
                     <input type="date" id="rot-start" class="nf-select" value="${today}" />
                 </div>
-                <p class="nf-field-label">📝 PATTERN</p>
-                <div class="nf-card">
-                    <select id="rot-pattern" class="nf-select">
-                        ${PATTERN_PRESETS.map(
-                            (p) => `<option value="${p.value}">${escapeHtml(p.label)}</option>`
-                        ).join('')}
-                    </select>
+                <p class="nf-field-label nf-field-label--loose">Choose a rotation</p>
+                <p class="nf-muted nf-rot-pick-hint">Tap a card. Each one repeats on a fixed cycle; your work/sleep times below are templates.</p>
+                <div class="nf-pattern-grid" id="rot-pattern-grid" role="radiogroup" aria-label="Rotation pattern">
+                    ${PATTERN_PRESETS.map(
+                        (p, i) => `
+                    <label class="nf-pattern-card${i === 0 ? ' is-checked' : ''}">
+                        <input type="radio" name="rot-pat" value="${escapeHtml(p.value)}"${
+                        i === 0 ? ' checked' : ''
+                    } />
+                        <span class="nf-pattern-card__body">
+                            <span class="nf-pattern-card__icon" aria-hidden="true">${escapeHtml(p.icon)}</span>
+                            <span class="nf-pattern-card__title">${escapeHtml(p.title)}</span>
+                            <span class="nf-pattern-card__days">${escapeHtml(p.days)}</span>
+                            <span class="nf-pattern-card__sub">${escapeHtml(p.sub)}</span>
+                        </span>
+                    </label>`
+                    ).join('')}
                 </div>
-                <p class="nf-field-label" id="rot-block-label" style="display:none;">⬛ BLOCK LENGTHS (block rotation only)</p>
-                <div class="nf-card" id="rot-block-wrap" style="display:none;">
-                    <div class="nf-row"><span>Night days</span><input type="number" min="1" class="nf-select" id="rot-bn" value="14" style="max-width:100px;"/></div>
-                    <div class="nf-row" style="margin-top:8px;"><span>Day days</span><input type="number" min="0" class="nf-select" id="rot-bd" value="14" style="max-width:100px;"/></div>
-                    <div class="nf-row" style="margin-top:8px;"><span>Off days</span><input type="number" min="0" class="nf-select" id="rot-bo" value="0" style="max-width:100px;"/></div>
+                <p class="nf-field-label" id="rot-block-label" style="display:none;">Block lengths (block rotation only)</p>
+                <div class="nf-card nf-rot-block-card" id="rot-block-wrap" style="display:none;">
+                    <p class="nf-rot-block-lead">How long does each <strong>run</strong> in the pattern?</p>
+                    <div class="nf-rot-block-row">
+                        <span class="nf-rot-block-lab">Nights in a row</span>
+                        <input type="number" min="1" class="nf-rot-block-num" id="rot-bn" value="14" />
+                    </div>
+                    <div class="nf-rot-block-row">
+                        <span class="nf-rot-block-lab">Days in a row</span>
+                        <input type="number" min="0" class="nf-rot-block-num" id="rot-bd" value="14" />
+                    </div>
+                    <div class="nf-rot-block-row">
+                        <span class="nf-rot-block-lab">Off days in a row</span>
+                        <input type="number" min="0" class="nf-rot-block-num" id="rot-bo" value="0" />
+                    </div>
                 </div>
-                <p class="nf-field-label">⚙️ SHIFT TEMPLATES</p>
-                <div class="nf-card">
-                    <div style="margin-bottom:12px;"><strong>🌙 NIGHT</strong></div>
-                    <div class="nf-row"><span>Work</span>${selectTimeHtml('', '19:00', 'rn_ws')}${selectTimeHtml('', '07:00', 'rn_we')}</div>
-                    <div class="nf-row" style="margin-top:8px;"><span>Sleep</span>${selectTimeHtml('', '08:00', 'rn_ss')}${selectTimeHtml('', '16:00', 'rn_se')}</div>
-                    <hr class="rot-day-hr" style="border:none;border-top:1px solid var(--nf-border);margin:14px 0;" />
-                    <div class="rot-day-block" style="margin-bottom:12px;"><strong>☀️ DAY</strong></div>
-                    <div class="nf-row rot-day-block"><span>Work</span>${selectTimeHtml('', '07:00', 'rd_ws')}${selectTimeHtml('', '19:00', 'rd_we')}</div>
-                    <div class="nf-row rot-day-block" style="margin-top:8px;"><span>Sleep</span>${selectTimeHtml('', '22:00', 'rd_ss')}${selectTimeHtml('', '06:00', 'rd_se')}</div>
-                    <div class="rot-4n4o-note nf-muted" style="display:none;margin-top:10px;">Day block hidden — this pattern has no day shifts.</div>
-                    <hr style="border:none;border-top:1px solid var(--nf-border);margin:14px 0;" />
-                    <div><strong>😴 OFF</strong><div class="nf-muted" style="margin-top:6px;">Handled by the pattern; sleep aligns to the next shift.</div></div>
+                <p class="nf-field-label nf-field-label--loose">Work &amp; sleep templates</p>
+                <p class="nf-muted nf-rot-pick-hint" style="margin-top:-2px;">Used on night / day blocks. Off days follow the pattern automatically.</p>
+                <div class="nf-rot-tpl-stack">
+                    <div class="nf-rot-tpl-card nf-rot-tpl-card--night">
+                        <div class="nf-rot-tpl-card__head">Night shift</div>
+                        <p class="nf-rot-tpl-card__note">For calendar days when the pattern has you on nights.</p>
+                    <div class="nf-rot-tpl-in">
+                    <div class="nf-row"><span class="nf-rot-tpl-lab">Work</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                        '',
+                        '19:00',
+                        'rn_ws'
+                    )}${selectTimeHtml('', '07:00', 'rn_we')}</span></div>
+                    <div class="nf-row" style="margin-top:8px;"><span class="nf-rot-tpl-lab">Sleep</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                        '',
+                        '08:00',
+                        'rn_ss'
+                    )}${selectTimeHtml('', '16:00', 'rn_se')}</span></div>
+                    </div>
+                    </div>
+                    <hr class="rot-day-hr" style="border:none;border-top:1px solid var(--nf-border);margin:0;" />
+                    <div class="nf-rot-tpl-card nf-rot-tpl-card--day rot-day-block">
+                        <div class="nf-rot-tpl-card__head">Day shift</div>
+                        <p class="nf-rot-tpl-card__note">For day-work blocks. Hidden if the pattern is nights-only.</p>
+                    <div class="nf-rot-tpl-in">
+                    <div class="nf-row rot-day-block"><span class="nf-rot-tpl-lab">Work</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                        '',
+                        '07:00',
+                        'rd_ws'
+                    )}${selectTimeHtml('', '19:00', 'rd_we')}</span></div>
+                    <div class="nf-row rot-day-block" style="margin-top:8px;"><span class="nf-rot-tpl-lab">Sleep</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                        '',
+                        '22:00',
+                        'rd_ss'
+                    )}${selectTimeHtml('', '06:00', 'rd_se')}</span></div>
+                    </div>
+                    </div>
+                    <p class="rot-4n4o-note nf-muted" style="display:none;margin:0 0 0;">Day template isn’t used for this pattern (nights only).</p>
+                <div class="nf-rot-tpl-card nf-rot-tpl-card--off">
+                    <div class="nf-rot-tpl-card__head">Off</div>
+                    <p class="nf-rot-tpl-card__note" style="margin:0;">Rest and recovery; sleep lines up to your next work block in the pattern.</p>
                 </div>
-                <button type="button" class="nf-cta" id="btn-create-rot">CREATE SCHEDULE</button>
+                </div>
+                <button type="button" class="nf-cta" id="btn-create-rot">Create schedule</button>
                 <p class="nf-hint-validate">For each template, work and sleep can’t overlap — you’ll be asked to fix it before saving.</p>
                 <p class="nf-sub nf-center">Saves to your account. Today’s plan updates from the pattern.</p>
             </div>`;
@@ -1080,11 +1175,18 @@
             else go('onboarding', false);
         };
         initTimePickerButtons($root);
-        const patSel = document.getElementById('rot-pattern');
+        function getSelectedRotPattern() {
+            const r = $root.querySelector('input[name="rot-pat"]:checked');
+            return r && r.value ? r.value : 'pitman_2_2_3';
+        }
         const syncRotForm = () => {
-            const v = patSel ? patSel.value : 'pitman_2_2_3';
+            const v = getSelectedRotPattern();
             const block = v === 'block_rotation';
             const d4n4o = v === 'pat_4n4o';
+            $root.querySelectorAll('.nf-pattern-card').forEach((lab) => {
+                const inp = lab.querySelector('input[name="rot-pat"]');
+                lab.classList.toggle('is-checked', inp && inp.checked);
+            });
             const bw = document.getElementById('rot-block-wrap');
             const bl = document.getElementById('rot-block-label');
             if (bw) bw.style.display = block ? 'block' : 'none';
@@ -1097,10 +1199,12 @@
             const note = $root.querySelector('.rot-4n4o-note');
             if (note) note.style.display = d4n4o ? 'block' : 'none';
         };
-        if (patSel) patSel.onchange = syncRotForm;
+        $root.querySelectorAll('input[name="rot-pat"]').forEach((inp) => {
+            inp.addEventListener('change', syncRotForm);
+        });
         syncRotForm();
         document.getElementById('btn-create-rot').onclick = async () => {
-            const patternId = patSel ? patSel.value : 'pitman_2_2_3';
+            const patternId = getSelectedRotPattern();
             const start = document.getElementById('rot-start').value;
             if (!start) {
                 tg.showAlert('Pick a pattern start date');
@@ -1295,12 +1399,19 @@
                     <div class="nf-today-line">${escapeHtml(formatLongDate(today).toUpperCase())}</div>
                     ${
                         rotating && !isOff && (sched.pattern_slot || sched.pattern_id)
-                            ? `<div class="nf-today-sub">${escapeHtml(
-                                  (String(sched.pattern_slot || 'today').toUpperCase() || 'TODAY') +
-                                      (sched.pattern_id
-                                          ? ' · ' + String(sched.pattern_id).replace(/_/g, ' ')
-                                          : '')
-                              )}</div>`
+                            ? (() => {
+                                  const pm = patternMetaFromId(sched.pattern_id);
+                                  const sl = formatPatternSlot(sched.pattern_slot) || 'Today';
+                                  return `<div class="nf-pattern-today" role="status">
+        <span class="nf-pattern-today-ico" aria-hidden="true">${escapeHtml(pm.icon)}</span>
+        <div class="nf-pattern-today-text">
+            <div class="nf-pattern-today-slot">${escapeHtml(sl)}</div>
+            <div class="nf-pattern-today-name">${escapeHtml(pm.title)}${
+            pm.days ? ' · ' + escapeHtml(pm.days) : ''
+        }</div>
+        </div>
+    </div>`;
+                              })()
                             : ''
                     }
                 </div>
@@ -1519,13 +1630,13 @@
             <p class="nf-day-head">${trBadge}${escapeHtml(dStr)} · <strong>${escapeHtml(stu)}</strong></p>
             ${
                 isMulti && (sched.pattern_id || sched.pattern_slot)
-                    ? `<p class="nf-day-meta nf-muted">${
-                          sched.pattern_slot
-                              ? escapeHtml(String(sched.pattern_slot)) +
-                                (sched.pattern_id ? ' · ' + escapeHtml(String(sched.pattern_id).replace(/_/g, ' ')) : '')
-                              : sched.pattern_id
-                                ? escapeHtml(String(sched.pattern_id).replace(/_/g, ' '))
-                                : ''
+                    ? `<p class="nf-day-meta nf-day-meta--pat">${
+                          [
+                              formatPatternSlot(sched.pattern_slot) ? escapeHtml(formatPatternSlot(sched.pattern_slot)) : '',
+                              sched.pattern_id ? escapeHtml(patternMetaFromId(sched.pattern_id).title) : '',
+                          ]
+                              .filter(Boolean)
+                              .join(' · ') || '—'
                       }</p>`
                     : ''
             }
@@ -2074,9 +2185,23 @@
               )}</strong>.</p>`
             : '';
         const rsX = rotatingShiftsObj();
+        const rotPatMeta = patternMetaFromId(rsX.pattern_id);
         const nX = rsX.night || {};
         const dX = rsX.day || {};
         const wsnX = (t) => escapeHtml(formatTime(t) || '—');
+        const pStart = state.rotatingPattern?.pattern_start_date;
+        let pStartNice = '—';
+        if (pStart) {
+            try {
+                pStartNice = new Date(String(pStart) + 'T12:00:00').toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                });
+            } catch (e) {
+                pStartNice = String(pStart);
+            }
+        }
         const workSleepBlock = isRotatingServer()
             ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
@@ -2102,13 +2227,24 @@
                 </div>`
                         : `<p class="nf-muted" style="padding:0 2px 8px;">Day template hidden — this pattern has no day shifts.</p>`
                 }
-                <div class="nf-card" style="margin-top:0;">
-                    <div class="nf-muted">Active pattern: <strong>${escapeHtml(
-                        String(rsX.pattern_id || '—')
-                    )}</strong></div>
-                    <div class="nf-muted" style="margin-top:6px;">Start date: <strong>${escapeHtml(
-                        String(state.rotatingPattern?.pattern_start_date || '—')
-                    )}</strong></div>
+                <div class="nf-card nf-card-pattern-info">
+                    <div class="nf-pattern-info-head">
+                        <span class="nf-pattern-info-ico" aria-hidden="true">${escapeHtml(rotPatMeta.icon)}</span>
+                        <div>
+                            <div class="nf-pattern-info-title">${escapeHtml(rotPatMeta.title)}</div>
+                            <p class="nf-pattern-info-sub">${escapeHtml(rotPatMeta.sub)}</p>
+                        </div>
+                    </div>
+                    <div class="nf-pattern-info-stats">
+                        <div class="nf-pattern-stat">
+                            <span class="nf-pattern-stat-l">Cycle</span>
+                            <span class="nf-pattern-stat-v">${escapeHtml(rotPatMeta.days || '—')}</span>
+                        </div>
+                        <div class="nf-pattern-stat">
+                            <span class="nf-pattern-stat-l">Pattern start</span>
+                            <span class="nf-pattern-stat-v">${escapeHtml(pStartNice)}</span>
+                        </div>
+                    </div>
                 </div>`
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
