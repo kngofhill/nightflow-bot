@@ -1558,13 +1558,13 @@
 
     function weekTrendLabel(t) {
         if (t === 'up') {
-            return '<div class="nf-trend nf-trend--up"><span class="nf-trend-ico">↑</span> Energy: stronger toward the end of the week</div>';
+            return '<div class="nf-trend nf-trend--in-header nf-trend--up"><span class="nf-trend-ico" aria-hidden="true">↑</span> Energy tilts <strong>up</strong> later in the week</div>';
         }
         if (t === 'down') {
-            return '<div class="nf-trend nf-trend--down"><span class="nf-trend-ico">↓</span> Energy: heavier than early in the week</div>';
+            return '<div class="nf-trend nf-trend--in-header nf-trend--down"><span class="nf-trend-ico" aria-hidden="true">↓</span> Energy leans <strong>heavier</strong> than at the start</div>';
         }
         if (t === 'steady') {
-            return '<div class="nf-trend nf-trend--mid"><span class="nf-trend-ico">→</span> Energy: stable across the week</div>';
+            return '<div class="nf-trend nf-trend--in-header nf-trend--mid"><span class="nf-trend-ico" aria-hidden="true">→</span> Energy held <strong>steady</strong> day to day</div>';
         }
         return '';
     }
@@ -2287,21 +2287,25 @@
                 <div class="nf-screen nf-week-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
                     ${topbarMainTabPage('Week')}
-                    <div class="nf-week-intro">
-                        <p class="nf-week-kicker">This week</p>
-                        <p class="nf-week-range"><span class="nf-week-range-ico" aria-hidden="true">📅</span> ${escapeHtml(
-                            w.range || ''
-                        )}</p>
+                    <div class="nf-card nf-week-header-card">
+                        <p class="nf-week-kicker">Weekly report</p>
+                        <p class="nf-week-lead">How your shifts, habits, and energy lined up</p>
+                        <div class="nf-week-date-pill" role="text">
+                            <span class="nf-week-range-ico" aria-hidden="true">📅</span>
+                            <span class="nf-week-date-pill-txt">${escapeHtml(w.range || '')}</span>
+                        </div>
+                        ${weekTrendLabel(w.energy_trend)}
                     </div>
-                    ${weekTrendLabel(w.energy_trend)}
+                    <section class="nf-week-block nf-week-block--mood" aria-label="Mood and energy">
+                        <h2 class="nf-week-block-title">Mood &amp; energy</h2>
+                        <p class="nf-week-block-desc">End-of-shift check-ins, combined for the week</p>
                     <div class="nf-card nf-week-hero nf-week-mood-card">
                         <div class="nf-week-hero-row">
-                            <div class="nf-donut nf-donut--mood" style="background:${moodBg};">
+                            <div class="nf-donut nf-donut--mood" style="background:${moodBg};" role="img" aria-label="Energy distribution for the week">
                                 <div class="nf-donut-hole"></div>
                             </div>
                             <div class="nf-week-hero-copy">
-                                <p class="nf-week-hero-title">Mood mix</p>
-                                <p class="nf-muted nf-week-hero-sub">${dLog} ${dLogLabel} with energy check-ins</p>
+                                <p class="nf-week-hero-stat"><span class="nf-week-hero-stat-n">${dLog}</span> ${dLogLabel} with energy check-ins</p>
                                 <ul class="nf-legend" aria-label="Energy distribution">
                                     <li><span class="nf-legend-swatch" style="background:#5c6bc0"></span> Drained</li>
                                     <li><span class="nf-legend-swatch" style="background:#90a4ae"></span> Low</li>
@@ -2311,9 +2315,10 @@
                             </div>
                         </div>
                     </div>
+                    </section>
                     <div class="nf-card nf-week-daily-wrap">
                         <p class="nf-week-section-h">Day by day</p>
-                        <p class="nf-week-section-sub">End-of-shift energy, Mon → Sun</p>
+                        <p class="nf-week-section-sub">Energy at end of shift — Mon through Sun</p>
                         <div class="nf-week-energy">
                         ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                             .map(
@@ -2327,29 +2332,47 @@
                             .join('')}
                         </div>
                     </div>
-                    <div class="nf-week-habits">
-                        <div class="nf-card nf-week-donut-card">
-                            <p class="nf-week-metric-title">☕ Coffee</p>
-                            <p class="nf-week-metric-sub">Avg adherence on scheduled times</p>
-                            <div class="nf-donut nf-donut--ring" style="--p:${hCoffee};"><span class="nf-donut-pct">${hCoffee}%</span></div>
+                    <section class="nf-week-block" aria-label="Habits">
+                        <h2 class="nf-week-block-title">Habits</h2>
+                        <p class="nf-week-block-desc">Averages for scheduled coffee, meals, and sleep quality</p>
+                        <div class="nf-week-snap-grid">
+                        <div class="nf-week-snap-tile">
+                            <span class="nf-week-snap-ico" aria-hidden="true">☕</span>
+                            <p class="nf-week-snap-kicker">Coffee</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--coffee-ring" style="--p:${hCoffee}%;" role="img" aria-label="Coffee adherence ${hCoffee} percent">
+                                <span class="nf-donut-pct nf-donut-pct--snap">${hCoffee}%</span>
+                            </div>
+                            <p class="nf-week-snap-hint">avg adherence</p>
                         </div>
-                        <div class="nf-card nf-week-donut-card">
-                            <p class="nf-week-metric-title">🍽 Meals</p>
-                            <p class="nf-week-metric-sub">Avg adherence on scheduled times</p>
-                            <div class="nf-donut nf-donut--ring" style="--p:${hMeal};"><span class="nf-donut-pct">${hMeal}%</span></div>
+                        <div class="nf-week-snap-tile">
+                            <span class="nf-week-snap-ico" aria-hidden="true">🍽</span>
+                            <p class="nf-week-snap-kicker">Meals</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--meal-ring" style="--p:${hMeal}%;" role="img" aria-label="Meal adherence ${hMeal} percent">
+                                <span class="nf-donut-pct nf-donut-pct--snap">${hMeal}%</span>
+                            </div>
+                            <p class="nf-week-snap-hint">avg adherence</p>
+                        </div>
+                        <div class="nf-week-snap-tile">
+                            <span class="nf-week-snap-ico" aria-hidden="true">🌙</span>
+                            <p class="nf-week-snap-kicker">Sleep</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--sleep-ring" style="--p:${sl}%;" role="img" aria-label="Average sleep quality ${sl} percent">
+                                <span class="nf-donut-pct nf-donut-pct--snap">${sl}%</span>
+                            </div>
+                            <p class="nf-week-snap-hint">avg from logs</p>
                         </div>
                     </div>
+                    </section>
                     <div class="nf-card nf-week-bars">
                         <p class="nf-week-section-h">By time slot</p>
-                        <p class="nf-week-section-sub">Adherence to each scheduled time</p>
-                        <div class="nf-week-bars-block">
+                        <p class="nf-week-section-sub">Adherence to each scheduled reminder time</p>
+                        <div class="nf-week-bars-block nf-week-bars-block--coffee">
                             <p class="nf-week-bars-block-title">☕ Coffee</p>
                     ${(w.coffee || [])
                         .map(
                             (c) => `
                     <div class="nf-meter-row">
                         <div class="nf-week-slot-lab">${escapeHtml(c.label)}</div>
-                        <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
+                        <div class="nf-meter"><div class="nf-meter-fill nf-meter-fill--coffee" style="width:${c.pct}%"></div></div>
                         <div class="nf-week-slot-pct">${c.pct}%</div>
                     </div>`
                         )
@@ -2367,7 +2390,7 @@
                             (c) => `
                     <div class="nf-meter-row">
                         <div class="nf-week-slot-lab">${escapeHtml(c.label)}</div>
-                        <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
+                        <div class="nf-meter"><div class="nf-meter-fill nf-meter-fill--meal" style="width:${c.pct}%"></div></div>
                         <div class="nf-week-slot-pct">${c.pct}%</div>
                     </div>`
                         )
@@ -2379,25 +2402,18 @@
                         }
                         </div>
                     </div>
-                    <div class="nf-card nf-week-sleep-card">
-                        <p class="nf-week-metric-title">Sleep quality (avg)</p>
-                        <p class="nf-week-metric-sub">From end-of-shift check-ins</p>
-                    <div class="nf-donut nf-donut--ring nf-donut--wide" style="--p:${sl}; margin-left:auto;margin-right:auto;"><span class="nf-donut-pct">${sl}%</span></div>
-                    </div>
                     ${
                         hasData
                             ? ''
-                            : '<p class="nf-muted" style="text-align:center;padding:4px 8px 12px;">Log end-of-shift check-ins to build your week-over-week trends here.</p>'
+                            : '<p class="nf-week-nudge nf-muted">Log end-of-shift check-ins to fill this report and track week over week.</p>'
                     }
                     ${
                         wellness.length
-                            ? `<div class="nf-card nf-week-wellness" style="margin-top:8px;">
-                        <p class="nf-card-label" style="margin:0 0 8px;">Gentle tips (this week)</p>
-                        <p class="nf-muted" style="font-size:0.8rem;margin:0 0 6px;">Based on your saved coffee, meal, and light times — not rules. Transition days are handled separately in Full schedule.</p>
-                        <ul class="nf-wellness-list" style="margin:0;padding-left:1.1em;">
-                        ${wellness
-                            .map((s) => `<li class="nf-muted" style="margin:4px 0;">${escapeHtml(s)}</li>`)
-                            .join('')}
+                            ? `<div class="nf-card nf-week-wellness">
+                        <p class="nf-week-wellness-title">Gentle tips for this week</p>
+                        <p class="nf-week-wellness-lead">From your saved coffee, meal, and light times — suggestions, not rules. Transition days stay in <strong>Full schedule</strong>.</p>
+                        <ul class="nf-week-wellness-list">
+                        ${wellness.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
                         </ul>
                     </div>`
                             : ''

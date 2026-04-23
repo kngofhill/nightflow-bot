@@ -1089,6 +1089,256 @@ input[type="date"]:focus {
     padding-bottom: 12px;
 }
 
+/* —— Report header (period + trend) —— */
+.nf-week-header-card {
+    margin-bottom: 4px;
+    padding: 14px 16px 12px;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 22%, var(--nf-border));
+    background: linear-gradient(
+        160deg,
+        color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 10%, var(--tg-theme-bg-color, #1a1a22)) 0%,
+        var(--tg-theme-secondary-bg-color, var(--nf-card)) 100%
+    );
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .nf-week-header-card {
+        border-color: rgba(100, 181, 246, 0.28);
+        background: linear-gradient(160deg, rgba(100, 181, 246, 0.08), var(--nf-card));
+    }
+}
+
+.nf-week-header-card .nf-week-kicker {
+    color: var(--tg-theme-button-color, var(--nf-primary));
+    opacity: 0.95;
+}
+
+.nf-week-lead {
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0 0 12px;
+    padding: 0;
+    max-width: 26rem;
+}
+
+.nf-week-date-pill {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 2px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 0.92rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--tg-theme-hint-color, var(--nf-border));
+}
+
+.nf-week-date-pill-txt {
+    min-width: 0;
+    line-height: 1.25;
+}
+
+/* Section framing (Mood, Habits) */
+.nf-week-block {
+    margin: 16px 0 0;
+    padding: 0 2px;
+}
+
+.nf-week-block--mood {
+    margin-top: 10px;
+}
+
+.nf-week-block-title {
+    font-size: 0.88rem;
+    font-weight: 800;
+    margin: 0 0 4px;
+    letter-spacing: 0.02em;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
+
+.nf-week-block-desc {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0 0 8px;
+}
+
+/* Habits: three-up snapshot */
+.nf-week-snap-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.nf-week-snap-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 10px 4px 8px;
+    min-width: 0;
+    border-radius: 12px;
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.08));
+    border: 1px solid var(--nf-border);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.nf-week-snap-ico {
+    display: block;
+    font-size: 1.15rem;
+    line-height: 1;
+    margin-bottom: 2px;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.15));
+}
+
+.nf-week-snap-kicker {
+    font-size: 0.62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0 0 2px;
+}
+
+.nf-week-snap-hint {
+    font-size: 0.6rem;
+    line-height: 1.25;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 4px 0 0;
+}
+
+.nf-donut--ring.nf-donut--snap {
+    width: 4.15rem;
+    height: 4.15rem;
+    margin: 2px auto 0;
+}
+
+.nf-donut--ring.nf-donut--snap::after {
+    width: 66%;
+    height: 66%;
+}
+
+.nf-donut--coffee-ring {
+    --c: #a1887f;
+}
+.nf-donut--meal-ring {
+    --c: #26a69a;
+}
+.nf-donut--sleep-ring {
+    --c: #7e8ce0;
+}
+
+.nf-donut-pct--snap {
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+/* Mood card: stat line (replaces “Mood mix” title) */
+.nf-week-hero-stat {
+    margin: 0 0 6px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+
+.nf-week-hero-stat-n {
+    font-weight: 800;
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    margin-right: 2px;
+}
+
+/* Meters: coffee vs meal tint */
+.nf-meter-fill--coffee {
+    background: linear-gradient(90deg, #8d6e63, #bcaaa4) !important;
+    border-radius: 3px;
+}
+
+.nf-meter-fill--meal {
+    background: linear-gradient(90deg, #00796b, #4db6ac) !important;
+    border-radius: 3px;
+}
+
+.nf-week-bars-block--coffee {
+    padding-bottom: 4px;
+}
+
+/* Empty CTA */
+.nf-week-nudge {
+    text-align: center;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 4px 8px 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.04));
+}
+
+/* Wellness card */
+.nf-week-wellness {
+    margin-top: 10px;
+    padding: 14px 14px 12px;
+    border: 1px solid color-mix(in srgb, var(--tg-theme-hint-color, #666) 35%, var(--nf-border));
+    background: color-mix(in srgb, var(--tg-theme-button-color, var(--nf-primary)) 6%, var(--tg-theme-secondary-bg-color, var(--nf-card)));
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .nf-week-wellness {
+        background: var(--nf-card);
+        border-color: var(--nf-border);
+    }
+}
+
+.nf-week-wellness-title {
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    margin: 0 0 6px;
+}
+
+.nf-week-wellness-lead {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    margin: 0 0 10px;
+}
+
+.nf-week-wellness-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nf-week-wellness-list li {
+    position: relative;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    padding-left: 1.1em;
+}
+
+.nf-week-wellness-list li::before {
+    content: '·';
+    position: absolute;
+    left: 0;
+    font-weight: 800;
+    color: var(--tg-theme-button-color, var(--nf-primary));
+}
+
 .nf-week-head {
     font-size: 0.95rem;
     font-weight: 600;
@@ -2072,6 +2322,7 @@ input[type="date"]:focus {
 
 /* Weekly report grid */
 .nf-week-daily-wrap {
+    margin-top: 12px;
     margin-bottom: 12px;
 }
 
@@ -2705,6 +2956,35 @@ ul.nf-tl.nf-timeline {
 .nf-trend--up { border-color: #26a69a; }
 .nf-trend--down { border-color: #e57373; }
 .nf-trend--mid { border-color: var(--tg-theme-hint-color, var(--nf-border)); }
+
+/* Trend copy inside the weekly report header (softer, no heavy frame) */
+.nf-week-header-card .nf-trend.nf-trend--in-header {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    border: none;
+    border-radius: 10px;
+    background: var(--tg-theme-bg-color, rgba(0, 0, 0, 0.12));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.nf-week-header-card .nf-trend--in-header.nf-trend--up,
+.nf-week-header-card .nf-trend--in-header.nf-trend--down,
+.nf-week-header-card .nf-trend--in-header.nf-trend--mid {
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+.nf-week-header-card .nf-trend--in-header.nf-trend--up {
+    border-left: 3px solid #26a69a;
+    padding-left: 12px;
+}
+.nf-week-header-card .nf-trend--in-header.nf-trend--down {
+    border-left: 3px solid #e57373;
+    padding-left: 12px;
+}
+.nf-trend--in-header strong {
+    font-weight: 800;
+    color: var(--tg-theme-text-color, var(--nf-text));
+}
 
 .nf-week-hero {
     margin-bottom: 10px;
