@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+from shared.schedule_utils import safe_json_parse
+
 # --- # TESTING ONLY — 1 Star price + short trial; production: set PRO_PRICE_STARS = 50
 PRO_PRICE_STARS = 1
 TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(minutes=5)
@@ -12,6 +14,11 @@ TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(minutes=5)
 # For a normal 14-day trial instead: TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
 
 REFUND_WINDOW_DAYS = 3
+"""Max completed Pro (Stars) refunds per UTC calendar month — stored under ``notification_prefs``."""
+MAX_PRO_REFUNDS_PER_UTC_MONTH = 3
+PRO_REFUND_COUNTS_BY_MONTH_KEY = "pro_refund_counts_by_month"
+"""Recent ``telegram_payment_charge_id`` values already counted toward the monthly cap (dedupe bot + Telegram updates)."""
+PRO_REFUND_RECORDED_CHARGE_IDS_KEY = "pro_refund_recorded_charge_ids"
 SUBSCRIPTION_PERIOD_SECONDS = 2592000  # 30 days — Telegram Stars recurring
 PRO_SUBSCRIPTION_DAYS = 30
 INVOICE_PAYLOAD_NIGHTFLOW_PRO = "nightflow_pro_v1"
@@ -85,6 +92,94 @@ def paid_pro_period_active(user_row: Optional[Dict[str, Any]], now: Optional[dat
     now = now or datetime.now(timezone.utc)
     pro_exp = _parse_dt(user_row.get("pro_expires_at"))
     return bool(pro_exp and now < pro_exp)
+
+
+def _notification_prefs_dict(user_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    raw = (user_row or {}).get("notification_prefs")
+    p = safe_json_parse(raw) if raw is not None else {}
+    return p if isinstance(p, dict) else {}
+
+
+def pro_refunds_this_utc_month(user_row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> int:
+    """How many Pro Stars refunds were recorded this calendar month (UTC)."""
+    now = now or datetime.now(timezone.utc)
+    ym = now.astimezone(timezone.utc).strftime("%Y-%m")
+    prefs = _notification_prefs_dict(user_row)
+    d = prefs.get(PRO_REFUND_COUNTS_BY_MONTH_KEY)
+    if not isinstance(d, dict):
+        return 0
+    try:
+        return int(d.get(ym) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pro_refund_month_limit_reached(user_row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> bool:
+    """True if the user cannot start another /refund this UTC month (abuse prevention)."""
+    return pro_refunds_this_utc_month(user_row, now) >= MAX_PRO_REFUNDS_PER_UTC_MONTH
+
+
+def merge_notification_prefs_increment_pro_refund(raw_prefs: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Return a full ``notification_prefs`` dict with this month's refund count bumped by 1."""
+    now = now or datetime.now(timezone.utc)
+    ym = now.astimezone(timezone.utc).strftime("%Y-%m")
+    prefs = safe_json_parse(raw_prefs) if raw_prefs is not None else {}
+    if not isinstance(prefs, dict):
+        prefs = {}
+    out = dict(prefs)
+    d0 = out.get(PRO_REFUND_COUNTS_BY_MONTH_KEY)
+    d: Dict[str, int] = {}
+    if isinstance(d0, dict):
+        for k, v in d0.items():
+            ks = str(k)
+            if not _is_year_month_key(ks):
+                continue
+            try:
+                d[ks] = int(v)
+            except (TypeError, ValueError):
+                continue
+    d[ym] = int(d.get(ym) or 0) + 1
+    # Keep a small window of months so the JSON does not grow forever.
+    keep = sorted([k for k in d if _is_year_month_key(k)], reverse=True)[:6]
+    out[PRO_REFUND_COUNTS_BY_MONTH_KEY] = {k: d[k] for k in keep if k in d}
+    return out
+
+
+def try_record_pro_refund_count(
+    raw_prefs: Any, charge_id: Optional[str] = None
+) -> tuple[Dict[str, Any], bool]:
+    """
+    Bump monthly refund count unless ``charge_id`` was already recorded (prevents double count when
+    both ``/refund`` and a Telegram ``refunded_payment`` message refer to the same charge).
+
+    Returns ``(new notification_prefs dict, did_increment)``.
+    """
+    prefs = safe_json_parse(raw_prefs) if raw_prefs is not None else {}
+    if not isinstance(prefs, dict):
+        prefs = {}
+    out = dict(prefs)
+    recorded = out.get(PRO_REFUND_RECORDED_CHARGE_IDS_KEY)
+    if not isinstance(recorded, list):
+        recorded = []
+    rec_set = {str(x) for x in recorded if x is not None and str(x).strip() != ""}
+    ch = (charge_id or "").strip()
+    if ch and ch in rec_set:
+        return out, False
+    out = merge_notification_prefs_increment_pro_refund(out)
+    if ch:
+        rec = list(recorded) + [ch]
+        out[PRO_REFUND_RECORDED_CHARGE_IDS_KEY] = rec[-100:]
+    return out, True
+
+
+def _is_year_month_key(s: str) -> bool:
+    if len(s) != 7 or s[4] != "-":
+        return False
+    try:
+        y, m = int(s[:4]), int(s[5:7])
+        return 2000 <= y <= 2100 and 1 <= m <= 12
+    except ValueError:
+        return False
 
 
 def within_refund_window(user_row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> bool:
@@ -271,4 +366,9 @@ def subscription_debug_summary(user_row: Optional[Dict[str, Any]], now: Optional
         f"Last payment recurring (Telegram): {rec if rec is not None else 'unknown (null — old row)'}"
     )
     lines.append(f"Refund window (3d from payment): {'eligible' if within_refund_window(user_row, now) else 'not eligible'}")
+    n = pro_refunds_this_utc_month(user_row, now)
+    lines.append(
+        f"Pro refunds this UTC month: {n}/{MAX_PRO_REFUNDS_PER_UTC_MONTH} "
+        f"({'limit reached' if n >= MAX_PRO_REFUNDS_PER_UTC_MONTH else 'under cap'})"
+    )
     return "\n".join(lines)

@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 import supabase
 
@@ -201,6 +201,29 @@ def apply_pro_subscription_from_payment(
         return _try_update(upd3)
 
     raise err
+
+
+def record_pro_refund_for_rate_limit(telegram_id: int, charge_id: Optional[str] = None) -> bool:
+    """
+    Record one Pro Stars refund toward the per-month cap. Pass ``telegram_payment_charge_id`` when
+    known so the same refund is not counted twice (e.g. ``/refund`` plus Telegram ``refunded_payment``).
+    """
+    from shared.subscription import try_record_pro_refund_count
+
+    row = get_user_by_telegram_id(telegram_id)
+    if not row:
+        return False
+    new_prefs, did_increment = try_record_pro_refund_count(row.get("notification_prefs"), charge_id)
+    if not did_increment:
+        return True
+    try:
+        supabase_client.table("users").update({"notification_prefs": new_prefs}).eq(
+            "telegram_id", int(telegram_id)
+        ).execute()
+        return True
+    except Exception as e:
+        logger.warning("record_pro_refund_for_rate_limit: %s", e)
+        return False
 
 
 def revoke_pro_subscription(telegram_id: int):

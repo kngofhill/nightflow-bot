@@ -921,6 +921,74 @@
         }
     }
 
+    /** Main tab pages (bottom bar). Does not use navigation stack. */
+    const MAIN_TAB_SCREENS = new Set(['dashboard', 'full', 'weekly', 'suggestions', 'settings']);
+
+    function goMainTab(screen) {
+        if (!MAIN_TAB_SCREENS.has(screen)) return;
+        if (['full', 'weekly', 'suggestions'].includes(screen) && !hasProEntitlement()) {
+            tg.showAlert(
+                'This area is part of Nightflow Pro. Use “Upgrade to Pro” on the home tab to unlock it.'
+            );
+            return;
+        }
+        state.stack = [];
+        state.screen = screen;
+        render();
+    }
+
+    function getMainTabBarHtml() {
+        const s = state.screen;
+        const mk = (screen, shortLabel, icon) => {
+            const active = s === screen;
+            return `<button type="button" class="nf-tab${active ? ' is-active' : ''}" data-main-tab="${screen}" aria-label="${escapeHtml(
+                shortLabel
+            )}" aria-current="${active ? 'true' : 'false'}">
+                <span class="nf-tab-ico" aria-hidden="true">${icon}</span>
+                <span class="nf-tab-lbl">${escapeHtml(shortLabel)}</span>
+            </button>`;
+        };
+        if (hasProEntitlement()) {
+            return `<nav class="nf-main-tabbar" role="tablist" aria-label="Main sections">
+                ${mk('dashboard', 'Home', '🌙')}
+                ${mk('full', 'Schedule', '📅')}
+                ${mk('weekly', 'Week', '📊')}
+                ${mk('suggestions', 'Ideas', '💡')}
+                ${mk('settings', 'Settings', '⚙️')}
+            </nav>`;
+        }
+        return `<nav class="nf-main-tabbar nf-main-tabbar--free" role="tablist" aria-label="Main sections">
+            ${mk('dashboard', 'Home', '🌙')}
+            ${mk('settings', 'Settings', '⚙️')}
+        </nav>`;
+    }
+
+    function bindMainTabBar() {
+        $root.querySelectorAll('[data-main-tab]').forEach((b) => {
+            b.addEventListener('click', () => {
+                goMainTab(b.getAttribute('data-main-tab'));
+            });
+        });
+    }
+
+    /** Top bar for tabbed screens: back only if something is on the stack (e.g. deep-linked from Ideas). */
+    function topbarMainTabPage(title) {
+        const hasBack = state.stack && state.stack.length > 0;
+        if (hasBack) {
+            return `<div class="nf-topbar"><button type="button" class="nf-back" id="mtb-back">←</button><h1>${escapeHtml(
+                title
+            )}</h1><span></span></div>`;
+        }
+        return `<div class="nf-topbar"><span class="nf-topbar-ghost" aria-hidden="true"></span><h1>${escapeHtml(
+            title
+        )}</h1><span></span></div>`;
+    }
+
+    function wireMainTabTopbar() {
+        const b = document.getElementById('mtb-back');
+        if (b) b.onclick = back;
+    }
+
     async function openProInvoice() {
         if (hasActivePaidPro()) {
             tg.showAlert(
@@ -1610,11 +1678,18 @@
         const rotating = isRotatingUi();
 
         let body = `
-            <div class="nf-screen">
+            <div class="nf-screen nf-screen--tabbed">
+                <div class="nf-tabbar-body">
                 <div class="nf-topbar">
-                    <span style="width:3rem;"></span>
+                    <span class="nf-topbar-ghost" aria-hidden="true"></span>
                     <h1>🌙 NIGHTFLOW</h1>
                     <span class="nf-clock">${escapeHtml(clock)}</span>
+                </div>
+                <div class="nf-home-quick">
+                    <button type="button" class="nf-home-dayoff" id="btn-home-dayoff">
+                        <span class="nf-home-dayoff-ico" aria-hidden="true">😴</span>
+                        <span>Mark day off</span>
+                    </button>
                 </div>
                 <div class="nf-card">
                     <div class="nf-card-label">Today</div>
@@ -1744,33 +1819,17 @@
             }
         }
 
-        const navInner = hasProEntitlement()
-            ? `
-                    <button type="button" class="nf-nav-btn" data-nav="dayoff"><span class="nf-nav-ico">😴</span>DAY OFF</button>
-                    <button type="button" class="nf-nav-btn" data-nav="full"><span class="nf-nav-ico">📅</span>FULL</button>
-                    <button type="button" class="nf-nav-btn" data-nav="weekly"><span class="nf-nav-ico">📊</span>WEEKLY</button>
-                    <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>`
-            : `
-                    <button type="button" class="nf-nav-btn" data-nav="dayoff"><span class="nf-nav-ico">😴</span>DAY OFF</button>
-                    <button type="button" class="nf-nav-btn" data-nav="settings"><span class="nf-nav-ico">⚙️</span>SETTINGS</button>`;
-        const navClass = hasProEntitlement() ? 'nf-bottom-nav' : 'nf-bottom-nav nf-bottom-nav--free';
-        body += `
-                <div class="${navClass}">
-                    ${navInner}
-                </div>
+        body += `</div>
+                ${getMainTabBarHtml()}
             </div>`;
 
         $root.innerHTML = body;
 
-        $root.querySelectorAll('[data-nav]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const n = btn.getAttribute('data-nav');
-                if (n === 'dayoff') go('dayoff', true);
-                if (n === 'full') go('full', true);
-                if (n === 'weekly') go('weekly', true);
-                if (n === 'settings') go('settings', true);
-            });
-        });
+        bindMainTabBar();
+        const homeDay = document.getElementById('btn-home-dayoff');
+        if (homeDay) {
+            homeDay.onclick = () => go('dayoff', true);
+        }
 
         const proBtn = document.getElementById('btn-dash-pro');
         if (proBtn) proBtn.onclick = () => openProInvoice();
@@ -1946,17 +2005,12 @@
                     }
                     days = [s];
                 } else {
-                    $root.innerHTML = `
-                <div class="nf-screen"><div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bf">← BACK</button>
-                    <h1>Full Schedule</h1>
-                    <span></span>
-                </div><p class="nf-muted">No events for this view.</p>
-                <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
-                </div>`;
-                    document.getElementById('bf').onclick = back;
-                    const b0 = document.getElementById('bfd');
-                    if (b0) b0.onclick = back;
+                    $root.innerHTML = `<div class="nf-screen nf-screen--tabbed"><div class="nf-tabbar-body">
+                    ${topbarMainTabPage('Schedule')}
+                    <p class="nf-muted" style="padding:0 4px 12px;">No events for this view.</p>
+                </div>${getMainTabBarHtml()}</div>`;
+                    bindMainTabBar();
+                    wireMainTabTopbar();
                     return;
                 }
             }
@@ -1990,20 +2044,18 @@
                 .join('');
 
             $root.innerHTML = `
-            <div class="nf-screen">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bf">← BACK</button>
-                    <h1>Full Schedule</h1>
-                    <span></span>
-                </div>
+            <div class="nf-screen nf-screen--tabbed">
+                <div class="nf-tabbar-body">
+                ${topbarMainTabPage('Schedule')}
                 ${rangeBlock}
                 <div class="nf-full-days">${dayBlocks}</div>
                 ${foot}
-                <button type="button" class="nf-cta nf-cta-secondary" id="bfd">BACK TO DASHBOARD</button>
+                </div>
+                ${getMainTabBarHtml()}
             </div>`;
 
-            document.getElementById('bf').onclick = back;
-            document.getElementById('bfd').onclick = back;
+            bindMainTabBar();
+            wireMainTabTopbar();
             if (hasProEntitlement()) {
                 $root.querySelectorAll('.nf-chip-range').forEach((b) => {
                     b.addEventListener('click', () => {
@@ -2070,12 +2122,9 @@
                 : `<div class="nf-card nf-center"><div style="font-weight:600;">No suggestions right now.</div><div class="nf-muted" style="margin-top:6px;">Keep logging your day — or clear ignored items from earlier.</div></div>`;
 
             $root.innerHTML = `
-                <div class="nf-screen nf-sug-screen">
-                    <div class="nf-topbar">
-                        <button type="button" class="nf-back" id="bsu">← Back</button>
-                        <h1>Suggestions</h1>
-                        <span></span>
-                    </div>
+                <div class="nf-screen nf-sug-screen nf-screen--tabbed">
+                    <div class="nf-tabbar-body">
+                    ${topbarMainTabPage('Ideas')}
                     <p class="nf-sug-lead">Select one or more ideas, then apply in one go. Ignored items stay hidden.</p>
                     ${sugRows}
                     ${
@@ -2085,11 +2134,12 @@
                     </div>`
                             : ''
                     }
-                    <button type="button" class="nf-cta nf-cta-secondary" id="bsub">Back to dashboard</button>
+                    </div>
+                    ${getMainTabBarHtml()}
                 </div>`;
 
-            document.getElementById('bsu').onclick = back;
-            document.getElementById('bsub').onclick = back;
+            wireMainTabTopbar();
+            bindMainTabBar();
 
             const applyBtn = document.getElementById('btn-sug-apply');
             const syncApplyEnabled = () => {
@@ -2240,12 +2290,9 @@
             const dLog = (eb.days_logged | 0) || 0;
             const dLogLabel = dLog === 1 ? 'day' : 'days';
             $root.innerHTML = `
-                <div class="nf-screen nf-week-screen">
-                    <div class="nf-topbar">
-                        <button type="button" class="nf-back" id="bw">← Back</button>
-                        <h1>Weekly</h1>
-                        <span></span>
-                    </div>
+                <div class="nf-screen nf-week-screen nf-screen--tabbed">
+                    <div class="nf-tabbar-body">
+                    ${topbarMainTabPage('Week')}
                     <div class="nf-week-intro">
                         <p class="nf-week-kicker">This week</p>
                         <p class="nf-week-range"><span class="nf-week-range-ico" aria-hidden="true">📅</span> ${escapeHtml(
@@ -2361,11 +2408,12 @@
                     </div>`
                             : ''
                     }
-                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-sug" style="margin-top:8px;">VIEW SUGGESTIONS</button>
+                </div>
+                ${getMainTabBarHtml()}
                 </div>`;
 
-            document.getElementById('bw').onclick = back;
-            document.getElementById('btn-sug').onclick = () => go('suggestions', true);
+            wireMainTabTopbar();
+            bindMainTabBar();
         })();
     }
 
@@ -2461,12 +2509,9 @@
         const sched = state.schedule;
         const tz = state.userRow?.timezone || 'Asia/Tashkent';
         $root.innerHTML = `
-            <div class="nf-screen nf-free-settings">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bst">← BACK</button>
-                    <h1>Settings</h1>
-                    <span></span>
-                </div>
+            <div class="nf-screen nf-screen--tabbed nf-free-settings">
+                <div class="nf-tabbar-body">
+                ${topbarMainTabPage('Settings')}
                 <p class="nf-free-settings-lead">Upgrade to Pro to customize your schedule.</p>
                 <div class="nf-card nf-free-readonly">
                     <h3 class="nf-free-h3">📅 Work &amp; sleep</h3>
@@ -2489,8 +2534,11 @@
                     )}</strong></p>
                 </div>
                 <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-pro">Upgrade to Pro</button>
+                </div>
+                ${getMainTabBarHtml()}
             </div>`;
-        document.getElementById('bst').onclick = back;
+        wireMainTabTopbar();
+        bindMainTabBar();
         document.getElementById('btn-settings-pro').onclick = () => openProInvoice();
     }
 
@@ -2688,12 +2736,9 @@
                    </div>`
             : '';
         $root.innerHTML = `
-            <div class="nf-screen">
-                <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bst">← BACK</button>
-                    <h1>Settings</h1>
-                    <span></span>
-                </div>
+            <div class="nf-screen nf-screen--tabbed">
+                <div class="nf-tabbar-body">
+                ${topbarMainTabPage('Settings')}
                 ${paidNotice}
                 ${trialPayBlock}
                 ${workSleepBlock}
@@ -2729,9 +2774,12 @@
                     <button type="button" class="nf-cta" id="save-all">SAVE ALL</button>
                     <button type="button" class="nf-cta nf-cta-secondary" id="reset-def">RESET</button>
                 </div>
+                </div>
+                ${getMainTabBarHtml()}
             </div>`;
 
-        document.getElementById('bst').onclick = back;
+        wireMainTabTopbar();
+        bindMainTabBar();
         const btnStars = document.getElementById('btn-settings-stars');
         if (btnStars) btnStars.onclick = () => openProInvoice();
         const btnSchedType = document.getElementById('btn-change-schedule-type');

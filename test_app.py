@@ -4,7 +4,7 @@ Run from project root:  python -m unittest test_app -v
 """
 
 import unittest
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from shared.schedule_utils import (
     str_to_time,
@@ -15,6 +15,14 @@ from shared.insights import (
     build_bad_habit_suggestion_items,
     get_habits_effective_from_date,
     week_query_start,
+)
+from shared.subscription import (
+    MAX_PRO_REFUNDS_PER_UTC_MONTH,
+    pro_refund_month_limit_reached,
+    try_record_pro_refund_count,
+    merge_notification_prefs_increment_pro_refund,
+    PRO_REFUND_COUNTS_BY_MONTH_KEY,
+    PRO_REFUND_RECORDED_CHARGE_IDS_KEY,
 )
 from shared.rotating_engine import (
     resolve_slot_in_cycle,
@@ -41,6 +49,32 @@ class TestScheduleUtils(unittest.TestCase):
     def test_classify_shift_night(self):
         self.assertEqual(classify_shift_type_from_work_start(time(20, 0)), "night")
         self.assertEqual(classify_shift_type_from_work_start(time(2, 0)), "night")
+
+
+class TestRefundMonthlyCap(unittest.TestCase):
+    def test_merge_increments_utc_month(self):
+        p = merge_notification_prefs_increment_pro_refund(
+            {PRO_REFUND_COUNTS_BY_MONTH_KEY: {}}
+        )
+        ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        self.assertEqual(p[PRO_REFUND_COUNTS_BY_MONTH_KEY].get(ym), 1)
+
+    def test_limit_reached_at_three(self):
+        ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        row3 = {
+            "notification_prefs": {PRO_REFUND_COUNTS_BY_MONTH_KEY: {ym: MAX_PRO_REFUNDS_PER_UTC_MONTH}}
+        }
+        self.assertTrue(pro_refund_month_limit_reached(row3))
+        row2 = {"notification_prefs": {PRO_REFUND_COUNTS_BY_MONTH_KEY: {ym: 2}}}
+        self.assertFalse(pro_refund_month_limit_reached(row2))
+
+    def test_try_record_dedupes_same_charge(self):
+        prefs = {}
+        p1, did1 = try_record_pro_refund_count(prefs, "chg_123")
+        self.assertTrue(did1)
+        p2, did2 = try_record_pro_refund_count(p1, "chg_123")
+        self.assertFalse(did2)
+        self.assertIn("chg_123", p1.get(PRO_REFUND_RECORDED_CHARGE_IDS_KEY, []))
 
 
 class TestSchedulesHelpers(unittest.TestCase):

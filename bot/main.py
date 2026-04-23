@@ -31,13 +31,16 @@ from shared.db import (
     apply_pro_subscription_from_payment,
     revoke_pro_subscription,
     mark_star_subscription_cancelled,
+    record_pro_refund_for_rate_limit,
 )
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
+    MAX_PRO_REFUNDS_PER_UTC_MONTH,
     PRO_PRICE_STARS,
     SUBSCRIPTION_PERIOD_SECONDS,
     has_pro_entitlement,
     paid_pro_period_active,
+    pro_refund_month_limit_reached,
     _parse_dt,
     within_refund_window,
     subscription_debug_summary,
@@ -90,7 +93,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/subscribe — Nightflow Pro (Telegram Stars)\n"
         f"/cancel — Stop Pro auto-renewal (same as app; keeps Pro until expiry)\n"
         f"/status — Trial / Pro debug (TESTING)\n"
-        f"/refund — Refund Stars (within 3 days; revokes Pro)\n"
+        f"/refund — Refund Stars (within 3 days; max {MAX_PRO_REFUNDS_PER_UTC_MONTH}/month; revokes Pro)\n"
         f"/pause — Pause notifications (Pro)\n"
         f"/resume — Resume notifications"
     )
@@ -219,6 +222,13 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Refunds are only allowed within the first 3 days after purchase."
             )
             return
+        if pro_refund_month_limit_reached(row):
+            await update.message.reply_text(
+                f"You have already used the maximum of {MAX_PRO_REFUNDS_PER_UTC_MONTH} Pro (Stars) refunds "
+                "in this calendar month (UTC). This limit prevents purchase–refund cycling. You can use /refund again "
+                "next month, or contact support for genuine billing issues."
+            )
+            return
 
         charge_id = (row or {}).get("telegram_payment_charge_id")
         if not charge_id:
@@ -274,6 +284,7 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Run the Supabase migration, then an admin can fix the row or you can try /refund again."
             )
             return
+        record_pro_refund_for_rate_limit(tid, str(charge_id))
         await update.message.reply_text("Stars refunded and Pro access removed.")
     except Exception as e:
         logger.exception("cmd_refund: %s", e)
@@ -383,6 +394,8 @@ async def on_refunded_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     tid = update.effective_user.id
     revoke_pro_subscription(tid)
+    rch = getattr(rp, "telegram_payment_charge_id", None) if rp else None
+    record_pro_refund_for_rate_limit(tid, str(rch) if rch is not None else None)
     await update.message.reply_text(
         "Your Stars payment was refunded. Pro access has been disabled immediately."
     )

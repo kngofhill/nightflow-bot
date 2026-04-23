@@ -384,7 +384,120 @@ body {
     margin-top: 10px;
 }
 
-/* Bottom nav */
+/* Main app: scroll area + fixed bottom tabs */
+.nf-screen--tabbed {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100dvh - 32px);
+    min-height: calc(100vh - 32px);
+    box-sizing: border-box;
+}
+
+.nf-tabbar-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-bottom: 4px;
+}
+
+.nf-main-tabbar {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    margin: 0 -4px 0;
+    padding: 6px 2px 2px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    background: var(--tg-theme-secondary-bg-color, rgba(0, 0, 0, 0.35));
+    border-top: 1px solid var(--tg-theme-hint-color, var(--nf-border));
+    border-radius: 16px 16px 0 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.nf-main-tabbar--free {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.nf-tab {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+    padding: 6px 2px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    min-width: 0;
+    cursor: pointer;
+    border-radius: 10px;
+    font: inherit;
+    touch-action: manipulation;
+}
+
+.nf-tab.is-active {
+    color: var(--tg-theme-button-color, var(--nf-primary));
+    background: var(--nf-primary-dim, rgba(64, 167, 227, 0.12));
+}
+
+.nf-tab-ico {
+    font-size: 1.15rem;
+    line-height: 1.1;
+}
+
+.nf-tab-lbl {
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 1px;
+}
+
+.nf-topbar-ghost {
+    display: inline-block;
+    width: 2.75rem;
+    flex-shrink: 0;
+}
+
+.nf-home-quick {
+    margin: 0 0 10px;
+}
+
+.nf-home-dayoff {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px dashed var(--tg-theme-hint-color, var(--nf-border));
+    border-radius: 12px;
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.04));
+    color: var(--tg-theme-text-color, var(--nf-text));
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.nf-home-dayoff:active {
+    opacity: 0.92;
+}
+
+.nf-home-dayoff-ico {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+/* Legacy: old 4-tile home buttons (replaced by main tabbar) */
 .nf-bottom-nav {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -899,7 +1012,7 @@ input[type="date"]:focus {
 
 .nf-sug-apply-bar {
     position: sticky;
-    bottom: 0;
+    bottom: 56px;
     margin: 16px 0 12px;
     padding: 10px 0 6px;
     background: linear-gradient(180deg, transparent, var(--tg-theme-bg-color, #111) 12%);
