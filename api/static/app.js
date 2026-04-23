@@ -1713,9 +1713,14 @@
                             b.removeAttribute('disabled');
                             return;
                         }
-                        applyConstantRowToState(data);
-                        const ok = await reloadScheduleFromApi();
-                        if (!ok) console.warn('reload after suggestion apply');
+                        if (data && data.rotating) {
+                            const ok = await reloadScheduleFromApi();
+                            if (!ok) console.warn('reload after suggestion apply (rotating)');
+                        } else {
+                            applyConstantRowToState(data);
+                            const ok = await reloadScheduleFromApi();
+                            if (!ok) console.warn('reload after suggestion apply');
+                        }
                         tg.showAlert('Your schedule was updated.');
                         go('settings', true);
                     } catch (e) {

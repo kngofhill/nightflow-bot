@@ -15,9 +15,11 @@ from shared.schedule_utils import (
 )
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
+from shared.insights import get_habits_effective_from_date, week_query_start, build_bad_habit_suggestion_items
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
+from typing import Optional, Tuple
 
 bp = Blueprint("schedules", __name__, url_prefix="/api/v1/schedules")
 
@@ -175,6 +177,10 @@ def upsert_rotating():
     ).execute()
     supabase_client.table("rotating_patterns").insert(payload).execute()
     supabase_client.table("users").update({"shift_type": "rotating"}).eq("id", user_id).execute()
+    try:
+        _set_habits_effective_from_today(user_id)
+    except Exception:
+        pass
     r = (
         supabase_client.table("rotating_patterns")
         .select("*")
@@ -290,6 +296,10 @@ def switch_to_constant():
         "active", True
     ).execute()
     supabase_client.table("users").update({"shift_type": "constant"}).eq("id", user_id).execute()
+    try:
+        _set_habits_effective_from_today(user_id)
+    except Exception:
+        pass
     return jsonify({"ok": True, "shift_type": "constant"})
 
 
@@ -474,6 +484,10 @@ def create_constant():
     for field in ("coffee_windows", "meal_windows", "brightness_windows"):
         insert_data[field] = json.dumps(insert_data[field])
     supabase_client.table("constant_schedules").insert(insert_data).execute()
+    try:
+        _set_habits_effective_from_today(user_id)
+    except Exception:
+        pass
 
     existing = (
         supabase_client.table("daily_schedules")
@@ -796,47 +810,28 @@ def _add_minutes_to_time_hhmm(tstr: str, delta_minutes: int) -> str:
     return time_to_str(base.time())
 
 
+def _set_habits_effective_from_today(user_id: str) -> None:
+    """After changing schedule type, ignore older end-of-day logs for habits / charts."""
+    tz = _user_timezone(user_id)
+    d0 = str(get_user_now_from_timezone_name(tz).date())
+    u = supabase_client.table("users").select("notification_prefs").eq("id", user_id).limit(1).execute()
+    row = u.data[0] if u.data else {}
+    prefs = safe_json_parse(row.get("notification_prefs")) or {}
+    if not isinstance(prefs, dict):
+        prefs = {}
+    prefs["habits_effective_from"] = d0
+    supabase_client.table("users").update({"notification_prefs": prefs}).eq("id", user_id).execute()
+
+
 def _build_weekly_suggestion_items(user_id) -> list:
-    timezone = _user_timezone(user_id)
-    now_local = get_user_now_from_timezone_name(timezone)
+    urow = fetch_user_row_by_id(user_id) or {}
+    tz = urow.get("timezone") or DEFAULT_TIMEZONE
+    now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
     week_start = local_today - timedelta(days=local_today.weekday())
     week_end = week_start + timedelta(days=6)
-
-    const = (
-        supabase_client.table("constant_schedules")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("active", True)
-        .execute()
-    )
-    if not const.data:
-        return []
-
-    schedule = const.data[0]
-    schedule["coffee_windows"] = safe_json_parse(schedule.get("coffee_windows"))
-    schedule["meal_windows"] = safe_json_parse(schedule.get("meal_windows"))
-
-    coffee_slots = schedule.get("coffee_windows") or []
-    meal_slots = schedule.get("meal_windows") or []
-
-    def time_minutes(tstr):
-        t = str_to_time(tstr)
-        if not t:
-            return 0
-        return t.hour * 60 + t.minute
-
-    coffee_slots = sorted(coffee_slots, key=lambda x: time_minutes(x.get("time")))
-    meal_slots = sorted(meal_slots, key=lambda x: time_minutes(x.get("time")))
-
-    rows = (
-        supabase_client.table("shift_summaries")
-        .select("local_date, energy, sleep_quality, responses")
-        .eq("user_id", user_id)
-        .gte("local_date", str(week_start))
-        .lte("local_date", str(week_end))
-        .execute()
-    )
+    eff = get_habits_effective_from_date(urow.get("notification_prefs"))
+    q0 = week_query_start(week_start, eff)
 
     def parse_responses(resp):
         if resp is None:
@@ -850,23 +845,42 @@ def _build_weekly_suggestion_items(user_id) -> list:
             return resp
         return {}
 
-    summaries_by_date = {}
-    for r in rows.data or []:
-        summaries_by_date[str(r.get("local_date"))] = r
+    rows = (
+        supabase_client.table("shift_summaries")
+        .select("local_date, energy, sleep_quality, responses")
+        .eq("user_id", user_id)
+        .gte("local_date", str(q0))
+        .lte("local_date", str(week_end))
+        .execute()
+    )
+    summaries_by_date = {str(r.get("local_date")): r for r in (rows.data or [])}
 
-    def slot_missed_count(slot_time, kind):
+    def _norm_slot_time(slot_time) -> str:
+        if not slot_time:
+            return ""
+        tc = str_to_time(str(slot_time)[:8])
+        return time_to_str(tc) if tc else str(slot_time)[:5]
+
+    def _slot_missed_count_constant(coffee_or_meal_kind, expected_slot_time) -> int:
+        """week missed count for a fixed time (permanent schedule)."""
+        tkey = _norm_slot_time(expected_slot_time)
         missed = 0
         for i in range(7):
             d = week_start + timedelta(days=i)
+            if eff and d < eff:
+                continue
             r = summaries_by_date.get(str(d))
             if not r:
                 missed += 1
                 continue
+            arr_key = "meals" if coffee_or_meal_kind == "meals" else "coffee"
             resp = parse_responses(r.get("responses"))
-            arr = resp.get(kind) or []
+            arr = resp.get(arr_key) or []
             rating = None
             for item in arr:
-                if item and item.get("time") == slot_time:
+                it = str(item.get("time") or "")
+                itn = _norm_slot_time(it)
+                if itn == tkey or str(item.get("time")) == tkey:
                     rating = item.get("rating")
                     break
             if rating is None:
@@ -875,73 +889,258 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 missed += 1
         return missed
 
-    def shift_time_hhmm(tstr, delta_minutes):
+    def shift_time_hhmm(tstr, delta_minutes) -> str:
         t = str_to_time(tstr)
         if not t:
             return tstr
         mins = (t.hour * 60 + t.minute + delta_minutes) % (24 * 60)
-        hh = mins // 60
-        mm = mins % 60
+        hh, mm = divmod(mins, 60)
         return f"{hh:02d}:{mm:02d}"
 
-    suggestions = []
+    def _tpl_windows(tpl: dict) -> tuple:
+        if not isinstance(tpl, dict):
+            return ([], [], [])
+        def _l(k):
+            v = tpl.get(k)
+            if isinstance(v, str):
+                return safe_json_parse(v) or []
+            if isinstance(v, list):
+                return v
+            return []
+        return (
+            _l("coffee_windows"),
+            _l("meal_windows"),
+            _l("brightness_windows"),
+        )
 
-    if coffee_slots:
+    suggestions = []
+    st = urow.get("shift_type") or "constant"
+
+    if st == "rotating":
+        rpat = (
+            supabase_client.table("rotating_patterns")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not rpat.data:
+            return []
+        rprow = dict(rpat.data[0])
+        sh0 = rprow.get("shifts") or {}
+        if isinstance(sh0, str):
+            sh0 = safe_json_parse(sh0) or {}
+        ntpl = (sh0.get("night") or {}) if isinstance(sh0, dict) else {}
+        dtpl = (sh0.get("day") or {}) if isinstance(sh0, dict) else {}
+        c_n, m_n, b_n = _tpl_windows(ntpl)
+        c_d, m_d, b_d = _tpl_windows(dtpl)
+        for it in build_bad_habit_suggestion_items(
+            ntpl.get("sleep_start"), c_n, m_n, b_n, "night"
+        ):
+            suggestions.append(it)
+        if pattern_includes_day_work(
+            str(sh0.get("pattern_id") or "pitman_2_2_3"), int((sh0.get("block_days") or 0) or 0), sh0
+        ) and dtpl:
+            for it in build_bad_habit_suggestion_items(
+                dtpl.get("sleep_start"), c_d, m_d, b_d, "day"
+            ):
+                suggestions.append(it)
+
+        def _rot_missed_best(rpatd: dict, knd: str, pslot: str) -> Optional[Tuple[str, int]]:
+            miss_map: dict = {}
+            elig: dict = {}
+            d0 = week_start
+            rpatd = dict(rpatd)
+            while d0 <= week_end:
+                if eff and d0 < eff:
+                    d0 += timedelta(days=1)
+                    continue
+                comp = build_rotating_day_from_pattern_row(rpatd, d0)
+                if (
+                    not comp
+                    or comp.get("pattern_slot") != pslot
+                    or comp.get("shift_type") == "off"
+                ):
+                    d0 += timedelta(days=1)
+                    continue
+                wkey = "meal_windows" if knd == "meals" else "coffee_windows"
+                arrk = "meals" if knd == "meals" else "coffee"
+                for w in (comp.get(wkey) or []):
+                    tt = w.get("time")
+                    if not tt:
+                        continue
+                    tkey = _norm_slot_time(tt)
+                    elig[tkey] = elig.get(tkey, 0) + 1
+                    r = summaries_by_date.get(str(d0))
+                    miss = True
+                    if r:
+                        arr = (parse_responses(r.get("responses"))).get(arrk) or []
+                        for itx in arr:
+                            if itx and _norm_slot_time(itx.get("time")) == tkey:
+                                if int(itx.get("rating") or 0) > 1:
+                                    miss = False
+                                break
+                    if miss:
+                        miss_map[tkey] = miss_map.get(tkey, 0) + 1
+                d0 += timedelta(days=1)
+            if not miss_map:
+                return None
+            t_best = max(miss_map, key=miss_map.get)
+            m_ct = miss_map.get(t_best, 0)
+            if m_ct >= 2 and elig.get(t_best, 0) >= 1:
+                return t_best, m_ct
+            return None
+
+        for pslot, lab in (("night", "🌙 NIGHT"), ("day", "☀️ DAY")):
+            cm = _rot_missed_best(rprow, "coffee", pslot)
+            if cm:
+                t_best, m_ct = cm
+                n_t = shift_time_hhmm(t_best, -30)
+                suggestions.append(
+                    {
+                        "title": f"☕ {lab} · {t_best} coffee",
+                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
+                        "action": f"MOVE TO {n_t} (on {pslot} template)",
+                        "apply": {
+                            "op": "shift_coffee",
+                            "from": t_best,
+                            "to": n_t,
+                            "template": pslot,
+                        },
+                    }
+                )
+            mm = _rot_missed_best(rprow, "meals", pslot)
+            if mm:
+                t_best, m_ct = mm
+                n_t = shift_time_hhmm(t_best, -30)
+                suggestions.append(
+                    {
+                        "title": f"🍽 {lab} · {t_best} meal",
+                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
+                        "action": f"MOVE TO {n_t} (on {pslot} template)",
+                        "apply": {
+                            "op": "shift_meal",
+                            "from": t_best,
+                            "to": n_t,
+                            "template": pslot,
+                        },
+                    }
+                )
+        return suggestions
+
+    # --- constant schedule (permanent) ---
+    const = (
+        supabase_client.table("constant_schedules")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("active", True)
+        .execute()
+    )
+    if not const.data:
+        return []
+
+    schedule = dict(const.data[0])
+    for f in ("coffee_windows", "meal_windows", "brightness_windows"):
+        v = schedule.get(f)
+        if isinstance(v, str):
+            schedule[f] = safe_json_parse(v) or []
+        elif isinstance(v, list):
+            schedule[f] = v
+        else:
+            schedule[f] = []
+
+    cwin = schedule.get("coffee_windows") or []
+    mwin = schedule.get("meal_windows") or []
+    bwin = schedule.get("brightness_windows") or []
+
+    def time_minutes(tstr):
+        t = str_to_time(tstr) if tstr else None
+        if not t:
+            return 0
+        return t.hour * 60 + t.minute
+
+    cwin = sorted(cwin, key=lambda x: time_minutes((x or {}).get("time")))
+    mwin = sorted(mwin, key=lambda x: time_minutes((x or {}).get("time")))
+
+    for it in build_bad_habit_suggestion_items(
+        schedule.get("sleep_start"), cwin, mwin, bwin, None
+    ):
+        suggestions.append(it)
+
+    if cwin:
         coffee_misses = [
-            (s.get("time"), slot_missed_count(s.get("time"), "coffee")) for s in coffee_slots if s.get("time")
+            (s.get("time"), _slot_missed_count_constant("coffee", s.get("time")))
+            for s in cwin
+            if s and s.get("time")
         ]
         coffee_misses.sort(key=lambda x: x[1], reverse=True)
         top_time, top_missed = coffee_misses[0]
         if top_missed >= 2:
-            new_t = shift_time_hhmm(top_time, -30)
+            n_t = shift_time_hhmm(_norm_slot_time(top_time), -30)
             suggestions.append(
                 {
                     "title": f"☕ {top_time} COFFEE",
-                    "body": f"Missed {top_missed} times this week.",
-                    "action": f"MOVE TO {new_t}",
-                    "apply": {"op": "shift_coffee", "from": top_time, "to": new_t},
+                    "body": f"Missed {top_missed} times in days after your last schedule change.",
+                    "action": f"MOVE TO {n_t}",
+                    "apply": {"op": "shift_coffee", "from": _norm_slot_time(top_time), "to": n_t},
                 }
             )
 
-    if meal_slots:
+    if mwin:
         meal_misses = [
-            (s.get("time"), slot_missed_count(s.get("time"), "meals")) for s in meal_slots if s.get("time")
+            (s.get("time"), _slot_missed_count_constant("meals", s.get("time")))
+            for s in mwin
+            if s and s.get("time")
         ]
         meal_misses.sort(key=lambda x: x[1], reverse=True)
         top_time, top_missed = meal_misses[0]
         if top_missed >= 2:
-            new_t = shift_time_hhmm(top_time, -30)
+            n_t = shift_time_hhmm(_norm_slot_time(top_time), -30)
             suggestions.append(
                 {
                     "title": f"🍽️ {top_time} MEAL",
-                    "body": f"Missed {top_missed} times this week.",
-                    "action": f"MOVE TO {new_t}",
-                    "apply": {"op": "shift_meal", "from": top_time, "to": new_t},
+                    "body": f"Missed {top_missed} times in days after your last schedule change.",
+                    "action": f"MOVE TO {n_t}",
+                    "apply": {"op": "shift_meal", "from": _norm_slot_time(top_time), "to": n_t},
                 }
             )
 
     sleep_vals = []
     for i in range(7):
         d = week_start + timedelta(days=i)
+        if eff and d < eff:
+            continue
         r = summaries_by_date.get(str(d))
         if r and r.get("sleep_quality") is not None:
             sleep_vals.append(int(r.get("sleep_quality")))
     if sleep_vals:
         avg_sleep = sum(sleep_vals) / len(sleep_vals)
         if avg_sleep <= 2:
-            deficit_hours = int(round(max(0, 2.5 - avg_sleep) * 16))
-            if deficit_hours <= 0:
-                deficit_hours = 8
+            df = int(round(max(0, 2.5 - avg_sleep) * 16)) or 8
+            if df <= 0:
+                df = 8
             suggestions.append(
                 {
                     "title": "😴 SLEEP WINDOW",
-                    "body": f"Deficit: {deficit_hours} hours this week.",
-                    "action": "ADD 30 MINUTES",
+                    "body": f"Sleep quality was low in days since your last schedule change.",
+                    "action": "ADD 30 MINUTES (earlier to bed)",
                     "apply": {"op": "extend_sleep", "delta_minutes": 30},
                 }
             )
 
     return suggestions
+
+
+def _shift_one_window_time(wlist: list, from_key: str, to_key: str):
+    cwin = [dict(x) for x in wlist] if wlist else []
+    for it in cwin:
+        cur = it.get("time")
+        tc = str_to_time(str(cur)[:8] if cur is not None else "")
+        if tc and time_to_str(tc) == from_key:
+            it["time"] = to_key
+            return (True, cwin)
+    return (False, cwin)
 
 
 @bp.route("/suggestions/apply", methods=["POST"])
@@ -962,6 +1161,81 @@ def apply_weekly_suggestion():
     if idx < 0:
         return jsonify({"error": "suggestion_index required"}), 400
 
+    urow = fetch_user_row_by_id(user_id)
+    if not urow:
+        return jsonify({"error": "User not found"}), 404
+    items = _build_weekly_suggestion_items(user_id)
+    if idx >= len(items):
+        return jsonify({"error": "That suggestion is no longer available. Refresh the list."}), 400
+    apply_op = (items[idx] or {}).get("apply")
+    if not apply_op or not apply_op.get("op"):
+        return jsonify({"error": "No apply action for this item"}), 400
+
+    op = str(apply_op.get("op") or "")
+    from_t = str(apply_op.get("from") or "").strip()
+    to_t = str(apply_op.get("to") or "").strip()
+    wsrc = str_to_time(from_t)
+    wto = str_to_time(to_t)
+    from_key = time_to_str(wsrc) if wsrc else ""
+    to_key = time_to_str(wto) if wto else ""
+    if op in ("shift_coffee", "shift_meal", "shift_bright") and (not wsrc or not wto):
+        return jsonify({"error": "Invalid time"}), 400
+
+    if urow.get("shift_type") == "rotating":
+        r0 = (
+            supabase_client.table("rotating_patterns")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not r0 or not r0.data:
+            return jsonify({"error": "No active rotating pattern"}), 404
+        rdict = dict(r0.data[0])
+        r_id = rdict["id"]
+        sh = rdict.get("shifts") or {}
+        if isinstance(sh, str):
+            sh = safe_json_parse(sh) or {}
+        if not isinstance(sh, dict):
+            sh = {}
+        template = (apply_op.get("template") or "night")[:10]
+        if template not in ("night", "day"):
+            template = "night"
+        if not isinstance(sh.get(template), dict):
+            sh[template] = sh.get(template) or {}
+        sec = sh[template]
+
+        if op == "extend_sleep":
+            return jsonify(
+                {"error": "For rotating patterns, change night or day sleep in Settings."}
+            ), 400
+
+        wname = "coffee_windows"
+        if op == "shift_meal":
+            wname = "meal_windows"
+        elif op == "shift_bright":
+            wname = "brightness_windows"
+        elif op != "shift_coffee":
+            return jsonify({"error": f"Unknown op: {op}"}), 400
+
+        rawl = sec.get(wname)
+        wlist = safe_json_parse(rawl) if isinstance(rawl, str) else (rawl if isinstance(rawl, list) else [])
+        hit, cwin = _shift_one_window_time(wlist, from_key, to_key)
+        if not hit:
+            return (
+                jsonify(
+                    {
+                        "error": "That time was not found on the template (schedule may have changed).",
+                    }
+                ),
+                400,
+            )
+        sec[wname] = cwin
+        sh[template] = sec
+        supabase_client.table("rotating_patterns").update({"shifts": sh}).eq("id", r_id).execute()
+        return jsonify({"ok": True, "rotating": True})
+
     const = (
         supabase_client.table("constant_schedules")
         .select("*")
@@ -974,59 +1248,25 @@ def apply_weekly_suggestion():
 
     row = dict(const.data[0])
     row_id = row["id"]
-    items = _build_weekly_suggestion_items(user_id)
-    if idx >= len(items):
-        return jsonify({"error": "That suggestion is no longer available. Refresh the list."}), 400
-    apply_op = (items[idx] or {}).get("apply")
-    if not apply_op or not apply_op.get("op"):
-        return jsonify({"error": "No apply action for this item"}), 400
-
-    op = apply_op["op"]
     updates = {}
     if op == "shift_coffee":
-        from_t = str(apply_op.get("from") or "").strip()
-        to_t = str(apply_op.get("to") or "").strip()
-        ws = str_to_time(from_t)
-        wt = str_to_time(to_t)
-        if not ws or not wt:
-            return jsonify({"error": "Invalid time"}), 400
-        from_key = time_to_str(ws)
-        to_key = time_to_str(wt)
         cwin = safe_json_parse(row.get("coffee_windows")) or []
-        cwin = [dict(x) for x in cwin]
-        hit = False
-        for it in cwin:
-            cur = it.get("time")
-            tc = str_to_time(str(cur)[:8] if cur is not None else "")
-            if tc and time_to_str(tc) == from_key:
-                it["time"] = to_key
-                hit = True
-                break
+        hit, cwin2 = _shift_one_window_time(cwin, from_key, to_key)
         if not hit:
             return jsonify({"error": "That coffee time was not found (schedule may have changed)."}), 400
-        updates["coffee_windows"] = json.dumps(cwin)
+        updates["coffee_windows"] = json.dumps(cwin2)
     elif op == "shift_meal":
-        from_t = str(apply_op.get("from") or "").strip()
-        to_t = str(apply_op.get("to") or "").strip()
-        ws = str_to_time(from_t)
-        wt = str_to_time(to_t)
-        if not ws or not wt:
-            return jsonify({"error": "Invalid time"}), 400
-        from_key = time_to_str(ws)
-        to_key = time_to_str(wt)
         mwin = safe_json_parse(row.get("meal_windows")) or []
-        mwin = [dict(x) for x in mwin]
-        hit = False
-        for it in mwin:
-            cur = it.get("time")
-            tc = str_to_time(str(cur)[:8] if cur is not None else "")
-            if tc and time_to_str(tc) == from_key:
-                it["time"] = to_key
-                hit = True
-                break
+        hit, mwin2 = _shift_one_window_time(mwin, from_key, to_key)
         if not hit:
             return jsonify({"error": "That meal time was not found (schedule may have changed)."}), 400
-        updates["meal_windows"] = json.dumps(mwin)
+        updates["meal_windows"] = json.dumps(mwin2)
+    elif op == "shift_bright":
+        bwin = safe_json_parse(row.get("brightness_windows")) or []
+        hit, bwin2 = _shift_one_window_time(bwin, from_key, to_key)
+        if not hit:
+            return jsonify({"error": "That light time was not found (schedule may have changed)."}), 400
+        updates["brightness_windows"] = json.dumps(bwin2)
     elif op == "extend_sleep":
         delta = int(apply_op.get("delta_minutes") or 0)
         if delta < 0 or delta > 180:
@@ -1037,11 +1277,10 @@ def apply_weekly_suggestion():
         t = str_to_time(str(ss)[:8] if isinstance(ss, str) else str(ss))
         if not t:
             return jsonify({"error": "Invalid sleep time"}), 400
-        # Add sleep duration by moving bed earlier (e.g. 30 min = sleep_start 30m earlier)
         new_ss = _add_minutes_to_time_hhmm(time_to_str(t), -delta)
         updates["sleep_start"] = new_ss
     else:
-        return jsonify({"error": "Unknown op"}), 400
+        return jsonify({"error": f"Unknown op: {op}"}), 400
 
     if not updates:
         return jsonify({"error": "Nothing to update"}), 400
