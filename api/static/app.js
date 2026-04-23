@@ -134,6 +134,34 @@
         }
     }
 
+    function languagePickerHtml() {
+        const cur = getLocale();
+        const b = (code) =>
+            `<button type="button" class="nf-lang-pill${cur === code ? ' is-on' : ''}" data-nf-lang="${code}">${code.toUpperCase()}</button>`;
+        return `<div class="nf-card nf-lang-card">
+            <p class="nf-field-label">${escapeHtml(t('stLang'))}</p>
+            <p class="nf-muted nf-lang-hint">${escapeHtml(t('stLangHint'))}</p>
+            <div class="nf-lang-row">${b('en')}${b('ru')}${b('uz')}</div>
+        </div>`;
+    }
+
+    function wireAppLanguagePills() {
+        $root.querySelectorAll('[data-nf-lang]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const code = btn.getAttribute('data-nf-lang');
+                if (!code || !['en', 'ru', 'uz'].includes(code)) return;
+                const row = await patchUserMe({ ui_language: code });
+                if (!row) {
+                    tg.showAlert(t('errSave'));
+                    return;
+                }
+                state.userRow = row;
+                syncDocumentLang();
+                render();
+            });
+        });
+    }
+
     function localDateStrNow() {
         return new Date().toISOString().slice(0, 10);
     }
@@ -276,7 +304,7 @@
         const v0 = (value && String(value).slice(0, 5)) || '22:00';
         const { h, m } = parseTimeParts(v0);
         const v = `${pad2(h)}:${pad2(m)}`;
-        const label = name || 'Time';
+        const label = name || t('stTimeL');
         return `<div class="nf-time-field">
             <input type="hidden" id="${id}" value="${v}" />
             <button type="button" class="nf-time-btn" data-nf-time-id="${id}" aria-label="${escapeHtml(
@@ -324,23 +352,25 @@
         $modal.querySelectorAll('.nf-tp-layer').forEach((el) => el.remove());
 
         const inner = `<div class="nf-tp" data-nf-tp-root>
-            <h3 class="nf-tp-title">Set time</h3>
-            <p class="nf-tp-sub">5-minute steps</p>
+            <h3 class="nf-tp-title">${escapeHtml(t('tpTitle'))}</h3>
+            <p class="nf-tp-sub">${escapeHtml(t('tpSub'))}</p>
             <div class="nf-tp-cols">
                 <div class="nf-tp-col">
-                    <div class="nf-tp-lab">Hour</div>
+                    <div class="nf-tp-lab">${escapeHtml(t('tpH'))}</div>
                     <div class="nf-tp-scroll">${hBtns}</div>
                 </div>
                 <div class="nf-tp-mid">:</div>
                 <div class="nf-tp-col">
-                    <div class="nf-tp-lab">Min</div>
+                    <div class="nf-tp-lab">${escapeHtml(t('tpM'))}</div>
                     <div class="nf-tp-scroll" data-nf-tp-mcol="1">${mBtns}</div>
                 </div>
             </div>
             <div class="nf-tp-preview" data-nf-tp-preview>${pad2(selH)}:${pad2(selM)}</div>
             <div class="nf-tp-actions">
-                <button type="button" class="nf-cta nf-cta-secondary" data-nf-tp-cancel>Cancel</button>
-                <button type="button" class="nf-cta" data-nf-tp-ok>Apply</button>
+                <button type="button" class="nf-cta nf-cta-secondary" data-nf-tp-cancel>${escapeHtml(
+                    t('mdlCan')
+                )}</button>
+                <button type="button" class="nf-cta" data-nf-tp-ok>${escapeHtml(t('tpApply'))}</button>
             </div>
         </div>`;
 
@@ -630,7 +660,7 @@
         const w = timeRangeToSegments(workStart, workEnd);
         const s = timeRangeToSegments(sleepStart, sleepEnd);
         if (segmentsOverlapHalfOpen(w, s)) {
-            return "Work and sleep can’t overlap. For example, if you work 0:00–8:00, don’t set sleep 6:00–14:00. Adjust your windows so they don’t sit on top of each other.";
+            return t('wsOverlap');
         }
         return null;
     }
@@ -690,52 +720,53 @@
     function getNextCoreEvent(sched) {
         if (!sched || !sched.work_start) {
             return {
-                line: '⏰ Add your work hours',
-                sub: 'Open Settings when you have Pro to edit',
+                line: '⏰ ' + t('evAddW'),
+                sub: t('evAddWS'),
                 icon: '⏰',
                 kindClass: 'other',
-                kindLabel: 'Setup',
+                kindLabel: t('evSetup'),
             };
         }
         const now = new Date();
         const candidates = [];
-        const add = (time, label, icon) => {
+        const add = (time, key, icon, kc) => {
             if (!time) return;
             const at = nextOccurrenceAfterNow(time, now);
             if (at) {
-                candidates.push({ at, label, icon, time: formatTime(time) });
+                candidates.push({
+                    at,
+                    shortLabel: t(key),
+                    icon,
+                    time: formatTime(time),
+                    kc: kc || 'work',
+                });
             }
         };
-        add(sched.work_start, 'Shift starts', '🌙');
-        add(sched.work_end, 'Shift ends', '🏁');
-        add(sched.sleep_start, 'Bedtime', '😴');
-        add(sched.sleep_end, 'Wake', '☀️');
+        add(sched.work_start, 'evWs', '🌙', 'work');
+        add(sched.work_end, 'evWe', '🏁', 'work');
+        add(sched.sleep_start, 'evBed', '😴', 'sleep');
+        add(sched.sleep_end, 'evWake', '☀️', 'sleep');
         if (!candidates.length) {
             return {
-                line: '⏰ Next on your schedule',
+                line: '⏰ ' + t('evNSch'),
                 sub: '—',
                 icon: '⏰',
                 kindClass: 'other',
-                kindLabel: 'Schedule',
+                kindLabel: t('schedPage'),
             };
         }
         candidates.sort((a, b) => a.at - b.at);
         const next = candidates[0];
         const bestDelta = (next.at - now) / 60000;
         const h = Math.floor(Math.max(0, bestDelta) / 60);
-        const m = Math.round(Math.max(0, bestDelta) % 60);
-        const shortLabel = (next.label || '').split('.')[0];
-        let kc = 'work';
-        if (next.label && String(next.label).toLowerCase().indexOf('bedtime') >= 0) kc = 'sleep';
-        if (next.label && String(next.label).toLowerCase().indexOf('wake') >= 0) kc = 'sleep';
-        if (next.label && String(next.label).toLowerCase().indexOf('shift end') >= 0) kc = 'work';
-        if (next.label && String(next.label).toLowerCase().indexOf('shift start') >= 0) kc = 'work';
-        const kl = kc === 'sleep' ? 'Sleep' : 'Work';
+        const mm = Math.round(Math.max(0, bestDelta) % 60);
+        const shortLabel = (next.shortLabel || '').split('.')[0];
+        const kl = next.kc === 'sleep' ? t('sleep') : t('work');
         return {
             line: `${kl} — ${next.icon} ${shortLabel} · ${next.time}`,
-            sub: `in ${h}h ${m}m`,
+            sub: t('inHM', h, mm),
             icon: next.icon,
-            kindClass: kc,
+            kindClass: next.kc,
             kindLabel: kl,
         };
     }
@@ -760,6 +791,13 @@
         return m;
     }
 
+    function shortHintByKind(kind) {
+        if (kind === 'coffee') return t('stCoff');
+        if (kind === 'meal') return t('stMeal');
+        if (kind === 'light') return t('stLight');
+        return '';
+    }
+
     function collectEvents(schedule) {
         const ev = [];
         const seen = new Set();
@@ -769,42 +807,48 @@
                 .trim();
         const push = (time, label, icon, kind) => {
             if (!time) return;
-            const t = formatTime(time);
-            const lab = clean(label) || 'Event';
-            const k = `${t}|${icon}|${lab}`;
+            const timeStr = formatTime(time);
+            const lab = clean(label) || t('evTE');
+            const k = `${timeStr}|${icon}|${lab}`;
             if (seen.has(k)) return;
             seen.add(k);
-            const m = parseTimeToMinutes(t);
+            const m = parseTimeToMinutes(timeStr);
             ev.push({
-                time: t,
+                time: timeStr,
                 label: lab,
                 icon,
                 kind: kind || 'other',
                 m,
-                sort: timeSortKeyForSchedule(t, schedule),
+                sort: timeSortKeyForSchedule(timeStr, schedule),
             });
         };
 
         if (schedule.work_start) {
-            push(schedule.work_start, 'Shift starts', '🌙', 'work_start');
+            push(schedule.work_start, t('evWs') + ' · ' + t('work'), '🌙', 'work_start');
         }
         if (schedule.work_end) {
-            push(schedule.work_end, 'Shift ends', '🏁', 'work_end');
+            push(schedule.work_end, t('evWe') + ' · ' + t('work'), '🏁', 'work_end');
         }
         if (schedule.sleep_start) {
-            push(schedule.sleep_start, 'Bedtime', '😴', 'sleep_start');
+            push(schedule.sleep_start, t('evBed') + ' · ' + t('sleep'), '😴', 'sleep_start');
         }
         if (schedule.sleep_end) {
-            push(schedule.sleep_end, 'Wake', '☀️', 'sleep_end');
+            push(schedule.sleep_end, t('evWake') + ' · ' + t('sleep'), '☀️', 'sleep_end');
         }
         (schedule.meal_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Meal', '🍽️', 'meal');
+            if (!w || !w.time) return;
+            const ts = formatTime(w.time);
+            push(w.time, `${t('stMeal')} — ${ts}`, '🍽️', 'meal');
         });
         (schedule.coffee_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Coffee', '☕', 'coffee');
+            if (!w || !w.time) return;
+            const ts = formatTime(w.time);
+            push(w.time, `${t('stCoff')} — ${ts}`, '☕', 'coffee');
         });
         (schedule.brightness_windows || []).forEach((w) => {
-            push(w.time, (w && w.message) || 'Light', '💡', 'light');
+            if (!w || !w.time) return;
+            const ts = formatTime(w.time);
+            push(w.time, `${t('stLight')} — ${ts}`, '💡', 'light');
         });
 
         ev.sort((a, b) => a.sort - b.sort);
@@ -842,12 +886,12 @@
     }
 
     function eventTypeTag(kind) {
-        if (kind === 'work_start' || kind === 'work_end') return 'WORK';
-        if (kind === 'sleep_start' || kind === 'sleep_end') return 'SLEEP';
-        if (kind === 'meal') return 'MEAL';
-        if (kind === 'coffee') return 'COFFEE';
-        if (kind === 'light') return 'LIGHT';
-        return 'EVENT';
+        if (kind === 'work_start' || kind === 'work_end') return t('evTW');
+        if (kind === 'sleep_start' || kind === 'sleep_end') return t('evTS');
+        if (kind === 'meal') return t('evTM');
+        if (kind === 'coffee') return t('evTC');
+        if (kind === 'light') return t('evTL');
+        return t('evTE');
     }
 
     function normalizeScheduleFields(row) {
@@ -873,11 +917,11 @@
         const raw = collectEvents(schedule);
         if (!raw.length) {
             return {
-                line: '⏰ No upcoming reminders',
-                sub: 'Add times in Settings',
+                line: '⏰ ' + t('evNRem'),
+                sub: t('evAddT'),
                 icon: '⏰',
                 kindClass: 'other',
-                kindLabel: 'Reminder',
+                kindLabel: t('evRem'),
             };
         }
         const now = new Date();
@@ -895,23 +939,27 @@
         const next = best || raw[0];
         const h = Math.floor(bestDelta / 60);
         const m = Math.round(bestDelta % 60);
-        const shortLabel = (next.label || '').split('.')[0];
         const cat = eventKindToCategory(next.kind);
         const kLabel =
             cat === 'work'
-                ? 'Work'
+                ? t('work')
                 : cat === 'sleep'
-                  ? 'Sleep'
+                  ? t('sleep')
                   : cat === 'meal'
-                    ? 'Meal'
+                    ? t('stMeal')
                     : cat === 'coffee'
-                      ? 'Coffee'
+                      ? t('stCoff')
                       : cat === 'light'
-                        ? 'Light'
-                        : 'Event';
+                        ? t('stLight')
+                        : t('evTE');
+        const isWin = cat === 'meal' || cat === 'coffee' || cat === 'light';
+        const shortLabel = isWin ? '' : (next.label || '').split('.')[0];
+        const line = isWin
+            ? `${kLabel} — ${next.icon} · ${next.time}`
+            : `${kLabel} — ${next.icon} ${shortLabel} · ${next.time}`;
         return {
-            line: `${kLabel} — ${next.icon} ${shortLabel} · ${next.time}`,
-            sub: `in ${h}h ${m}m`,
+            line,
+            sub: t('inHM', h, m),
             icon: next.icon,
             kindClass: cat,
             kindLabel: kLabel,
@@ -1018,9 +1066,7 @@
     async function openProInvoice() {
         if (hasActivePaidPro()) {
             tg.showAlert(
-                `You already have an active Pro subscription until ${
-                    formatProExpiresUser() || 'the end of your current period'
-                }. No need to subscribe again.`
+                `${t('proHasSub')} ${t('stProUntil')} ${formatProExpiresUser() || '—'}.`
             );
             return;
         }
@@ -1028,10 +1074,8 @@
             const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
             const data = await res.json().catch(() => ({}));
             if (res.status === 409) {
-                tg.showAlert(
-                    data.error ||
-                        'You already have an active Pro subscription. No need to subscribe again.'
-                );
+                if (data && data.error) console.warn('openProInvoice', data.error);
+                tg.showAlert(t('proHasSub'));
                 if (data.pro_expires_at && state.userRow) {
                     state.userRow = {
                         ...state.userRow,
@@ -1049,7 +1093,7 @@
                 tg.openInvoice(url, (st) => {
                     if (st === 'paid') {
                         loadUserAndSchedule();
-                        tg.showAlert('Welcome to Nightflow Pro!');
+                        tg.showAlert(t('proWelcome'));
                     }
                 });
             } else {
@@ -1057,7 +1101,7 @@
             }
         } catch (e) {
             console.warn(e);
-            tg.showAlert('Open the bot chat and send /subscribe to pay with Stars.');
+            tg.showAlert(t('proOpenBot'));
         }
     }
 
@@ -1082,15 +1126,15 @@
     }
 
     function renderLoading() {
-        $root.innerHTML = '<div class="nf-loading">Loading…</div>';
+        $root.innerHTML = `<div class="nf-loading">${escapeHtml(t('loading'))}</div>`;
     }
 
     function renderOnboarding() {
         const type = state.onboardingType || 'rotating';
         const topFromSettings = state.onboardingFromSettings
             ? `<div class="nf-topbar" style="margin:0 0 12px;">
-                <button type="button" class="nf-back" id="onb-back">← Back</button>
-                <h1 class="nf-onb-top-title">Change schedule</h1>
+                <button type="button" class="nf-back" id="onb-back">← ${escapeHtml(t('back'))}</button>
+                <h1 class="nf-onb-top-title">${escapeHtml(t('obChSch'))}</h1>
                 <span></span>
             </div>`
             : '';
@@ -1100,11 +1144,11 @@
                 ${topFromSettings}
                 <div class="nf-onb-hero">
                     <div class="nf-onb-moon" aria-hidden="true">🌙</div>
-                    <h1 class="nf-onb-title">NIGHTFLOW</h1>
-                    <p class="nf-onb-tagline">Your body’s guide through the night</p>
+                    <h1 class="nf-onb-title">${escapeHtml(t('obBrand'))}</h1>
+                    <p class="nf-onb-tagline">${escapeHtml(t('obTag'))}</p>
                 </div>
-                <p class="nf-onb-pick">How do you work?</p>
-                <div class="nf-select-card nf-onb-card" role="radiogroup" aria-label="Schedule type">
+                <p class="nf-onb-pick">${escapeHtml(t('obQ'))}</p>
+                <div class="nf-select-card nf-onb-card" role="radiogroup" aria-label="${escapeHtml(t('stSchType'))}">
                     <div class="nf-onb-choices">
                         <label class="nf-choice-tile">
                             <input type="radio" name="stype" value="rotating" ${
@@ -1112,8 +1156,8 @@
                             } />
                             <span class="nf-choice-ico" aria-hidden="true">🔁</span>
                             <div class="nf-choice-text">
-                                <span class="nf-choice-title">Rotating</span>
-                                <span class="nf-choice-sub">2-2-3, blocks, or 4-4-4-4</span>
+                                <span class="nf-choice-title">${escapeHtml(t('obRot'))}</span>
+                                <span class="nf-choice-sub">${escapeHtml(t('obRS'))}</span>
                             </div>
                         </label>
                         <label class="nf-choice-tile">
@@ -1122,13 +1166,13 @@
                             } />
                             <span class="nf-choice-ico" aria-hidden="true">⏱</span>
                             <div class="nf-choice-text">
-                                <span class="nf-choice-title">Permanent</span>
-                                <span class="nf-choice-sub">Fixed hours every shift</span>
+                                <span class="nf-choice-title">${escapeHtml(t('obP'))}</span>
+                                <span class="nf-choice-sub">${escapeHtml(t('obPS'))}</span>
                             </div>
                         </label>
                     </div>
                 </div>
-                <button type="button" class="nf-cta nf-onb-cta" id="btn-onb-continue">Continue</button>
+                <button type="button" class="nf-cta nf-onb-cta" id="btn-onb-continue">${escapeHtml(t('obCont'))}</button>
             </div>`;
         const bback = document.getElementById('onb-back');
         if (bback) {
@@ -1149,61 +1193,57 @@
 
     function renderSetupPermanent() {
         const hint = state.finishingConstantSetup
-            ? `<p class="nf-onb-hint">You’re switching to a <strong>fixed</strong> schedule. Set the hours you keep every shift — we’ll rebuild your reminders.</p>`
+            ? `<p class="nf-onb-hint">${escapeHtml(t('spH1'))}</p>`
             : `<div class="nf-setup-perm-hero">
                     <div class="nf-setup-perm-hero-ico" aria-hidden="true">⏱</div>
                     <div class="nf-setup-perm-hero-copy">
-                        <h2 class="nf-setup-perm-hero-title">Fixed weekly hours</h2>
-                        <p class="nf-setup-perm-hero-sub">Same work and sleep window every day. You can fine-tune coffee, meals, and light in settings after this.</p>
+                        <h2 class="nf-setup-perm-hero-title">${escapeHtml(t('spH2'))}</h2>
+                        <p class="nf-setup-perm-hero-sub">${escapeHtml(t('spH2s'))}</p>
                     </div>
                 </div>`;
         $root.innerHTML = `
             <div class="nf-screen nf-setup-perm">
                 <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="btn-sp-back">← Back</button>
-                    <h1>Permanent schedule</h1>
+                    <button type="button" class="nf-back" id="btn-sp-back">← ${escapeHtml(t('back'))}</button>
+                    <h1>${escapeHtml(t('spT'))}</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
                 ${hint}
-                <p class="nf-field-label nf-field-label--loose">Shift &amp; sleep</p>
-                <p class="nf-muted nf-rot-pick-hint" style="margin-top:0;">These times repeat every week. We validate that work and sleep don’t overlap on the same calendar day.</p>
+                <p class="nf-field-label nf-field-label--loose">${escapeHtml(t('stWS'))}</p>
+                <p class="nf-muted nf-rot-pick-hint" style="margin-top:0;">${escapeHtml(t('spV'))}</p>
                 <div class="nf-rot-tpl-stack nf-setup-perm-stack">
                     <div class="nf-rot-tpl-card nf-rot-tpl-card--night">
-                        <div class="nf-rot-tpl-card__head">Work</div>
-                        <p class="nf-rot-tpl-card__note">When your shift runs — night or day, as long as it’s consistent.</p>
+                        <div class="nf-rot-tpl-card__head">${escapeHtml(t('work'))}</div>
+                        <p class="nf-rot-tpl-card__note">${escapeHtml(t('sWN'))}</p>
                         <div class="nf-rot-tpl-in">
-                            <div class="nf-row"><span class="nf-rot-tpl-lab">Start</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
-                                'Work start',
+                            <div class="nf-row"><span class="nf-rot-tpl-lab">${escapeHtml(t('sWS'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                '',
                                 '22:00',
                                 'ws'
                             )}</span></div>
-                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">End</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
-                                'Work end',
-                                '06:00',
-                                'we'
-                            )}</span></div>
+                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">${escapeHtml(
+                                t('sWE')
+                            )}</span><span class="nf-rot-tpl-pair">${selectTimeHtml('', '06:00', 'we')}</span></div>
                         </div>
                     </div>
                     <div class="nf-rot-tpl-card nf-rot-tpl-card--perm-sleep">
-                        <div class="nf-rot-tpl-card__head">Sleep</div>
-                        <p class="nf-rot-tpl-card__note">Main sleep block between shifts — should not overlap your work times above.</p>
+                        <div class="nf-rot-tpl-card__head">${escapeHtml(t('sleep'))}</div>
+                        <p class="nf-rot-tpl-card__note">${escapeHtml(t('sSN'))}</p>
                         <div class="nf-rot-tpl-in">
-                            <div class="nf-row"><span class="nf-rot-tpl-lab">Start</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
-                                'Sleep start',
+                            <div class="nf-row"><span class="nf-rot-tpl-lab">${escapeHtml(t('sSS'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                '',
                                 '08:00',
                                 'ss'
                             )}</span></div>
-                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">End</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
-                                'Sleep end',
-                                '16:00',
-                                'se'
-                            )}</span></div>
+                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">${escapeHtml(
+                                t('sSE')
+                            )}</span><span class="nf-rot-tpl-pair">${selectTimeHtml('', '16:00', 'se')}</span></div>
                         </div>
                     </div>
                 </div>
-                <p class="nf-hint-validate">Work and sleep are checked so they can’t overlap on the same day.</p>
-                <button type="button" class="nf-cta" id="btn-create-const">Create schedule</button>
-                <p class="nf-sub nf-center" style="margin-top:4px;">Saves to your account. You can edit this anytime in settings.</p>
+                <p class="nf-hint-validate">${escapeHtml(t('spV'))}</p>
+                <button type="button" class="nf-cta" id="btn-create-const">${escapeHtml(t('spCr'))}</button>
+                <p class="nf-sub nf-center" style="margin-top:4px;">${escapeHtml(t('spSF'))}</p>
             </div>`;
         document.getElementById('btn-sp-back').onclick = () => {
             state.finishingConstantSetup = false;
@@ -1246,7 +1286,10 @@
                 );
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    $root.innerHTML = `<div class="nf-error">${escapeHtml(err.error || 'Could not save')}</div>`;
+                    if (err && err.error) console.warn('setup constant', err.error);
+                    $root.innerHTML = `<div class="nf-error">${escapeHtml(
+                        t('saveErrHtml')
+                    )}</div>`;
                     return;
                 }
                 state.finishingConstantSetup = false;
@@ -1258,61 +1301,48 @@
                 await loadUserAndSchedule();
             } catch (e) {
                 console.error(e);
-                $root.innerHTML = '<div class="nf-error">Network error</div>';
+                $root.innerHTML = `<div class="nf-error">${escapeHtml(t('netErrHtml'))}</div>`;
             }
         };
     }
 
-    const PATTERN_PRESETS = [
-        {
-            value: 'pitman_2_2_3',
-            title: '2-2-3 (Pitman)',
-            sub: 'Two on, two off, three on — then day block. Very common in hospitals.',
-            days: '14-day cycle',
-            icon: '🔀',
-        },
-        {
-            value: 'block_rotation',
-            title: 'Block rotation',
-            sub: 'Run nights, then days, then rest — you set how long each block is.',
-            days: 'Custom length',
-            icon: '⬛',
-        },
-        {
-            value: 'pat_4n4o4d4o',
-            title: '4–4 / 4–4',
-            sub: 'Four night shifts, four off, four day, four off — 16-day loop.',
-            days: '16-day cycle',
-            icon: '🔁',
-        },
-        {
-            value: 'pat_4n4o',
-            title: '4 on / 4 off (nights)',
-            sub: 'Four night shifts, then four days off. No day block.',
-            days: '8-day cycle',
-            icon: '🌙',
-        },
+    const PATTERN_PRESET_DEFS = [
+        { value: 'pitman_2_2_3' },
+        { value: 'block_rotation' },
+        { value: 'pat_4n4o4d4o' },
+        { value: 'pat_4n4o' },
     ];
 
+    function patternPresetMeta(value) {
+        const v = value == null ? '' : String(value);
+        if (v === 'pitman_2_2_3') {
+            return { value: v, icon: '🔀', title: t('patPitT'), sub: t('patPitS'), days: t('patPitD') };
+        }
+        if (v === 'block_rotation') {
+            return { value: v, icon: '⬛', title: t('patBlkT'), sub: t('patBlkS'), days: t('patBlkD') };
+        }
+        if (v === 'pat_4n4o4d4o') {
+            return { value: v, icon: '🔁', title: t('patN44T'), sub: t('patN44S'), days: t('patN44D') };
+        }
+        if (v === 'pat_4n4o4o' || v === 'pat_4n4o') {
+            return { value: v, icon: '🌙', title: t('patN4oT'), sub: t('patN4oS'), days: t('patN4oD') };
+        }
+        if (v) {
+            return { value: v, icon: '📅', title: v.replace(/_/g, ' '), sub: t('patFBS'), days: '' };
+        }
+        return { value: '', icon: '📅', title: t('patFBT'), sub: t('patFBS'), days: '' };
+    }
+
     function patternMetaFromId(id) {
-        const raw = id == null ? '' : String(id);
-        const m = PATTERN_PRESETS.find((p) => p.value === raw);
-        if (m) return m;
-        return {
-            value: raw,
-            title: raw ? raw.replace(/_/g, ' ') : 'Pattern',
-            sub: 'Rotating schedule',
-            days: '',
-            icon: '📅',
-        };
+        return patternPresetMeta(id);
     }
 
     function formatPatternSlot(slot) {
         if (slot == null || slot === '') return '';
         const s = String(slot).toLowerCase();
-        if (s === 'night') return 'Night';
-        if (s === 'day') return 'Day';
-        if (s === 'off') return 'Off day';
+        if (s === 'night') return t('stNt');
+        if (s === 'day') return t('stDt');
+        if (s === 'off') return t('offD');
         return s.charAt(0).toUpperCase() + s.slice(1);
     }
 
@@ -1322,62 +1352,63 @@
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="btn-sr-back">← Back</button>
-                    <h1>Rotating schedule</h1>
+                    <button type="button" class="nf-back" id="btn-sr-back">← ${escapeHtml(t('back'))}</button>
+                    <h1>${escapeHtml(t('srT'))}</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
-                <p class="nf-field-label nf-field-label--loose">Where should the cycle begin?</p>
+                <p class="nf-field-label nf-field-label--loose">${escapeHtml(t('srAQ'))}</p>
                 <div class="nf-card nf-card--inset">
                     <input type="date" id="rot-start" class="nf-select" value="${today}" />
                 </div>
-                <p class="nf-muted nf-rot-pick-hint nf-rot-anchor-hint">This <strong>anchor date</strong> is day 1 of the built-in sequence (e.g. Pitman: two night shifts first). The same pattern <strong>lines up on different weekdays</strong> if you set this to Monday vs Thursday — each calendar day moves you one step in the cycle.</p>
-                <p class="nf-field-label nf-field-label--loose">Choose a rotation</p>
-                <p class="nf-muted nf-rot-pick-hint">Tap a card. Each one repeats on a fixed cycle; your work/sleep times below are templates.</p>
-                <div class="nf-pattern-grid" id="rot-pattern-grid" role="radiogroup" aria-label="Rotation pattern">
-                    ${PATTERN_PRESETS.map(
-                        (p, i) => `
+                <p class="nf-muted nf-rot-pick-hint nf-rot-anchor-hint">${escapeHtml(t('srAH'))}</p>
+                <p class="nf-field-label nf-field-label--loose">${escapeHtml(t('srPR'))}</p>
+                <p class="nf-muted nf-rot-pick-hint">${escapeHtml(t('srPH'))}</p>
+                <div class="nf-pattern-grid" id="rot-pattern-grid" role="radiogroup" aria-label="${escapeHtml(t('srGA'))}">
+                    ${PATTERN_PRESET_DEFS.map((d, i) => {
+                        const p = patternPresetMeta(d.value);
+                        return `
                     <label class="nf-pattern-card${i === 0 ? ' is-checked' : ''}">
                         <input type="radio" name="rot-pat" value="${escapeHtml(p.value)}"${
-                        i === 0 ? ' checked' : ''
-                    } />
+                            i === 0 ? ' checked' : ''
+                        } />
                         <span class="nf-pattern-card__body">
                             <span class="nf-pattern-card__icon" aria-hidden="true">${escapeHtml(p.icon)}</span>
                             <span class="nf-pattern-card__title">${escapeHtml(p.title)}</span>
                             <span class="nf-pattern-card__days">${escapeHtml(p.days)}</span>
                             <span class="nf-pattern-card__sub">${escapeHtml(p.sub)}</span>
                         </span>
-                    </label>`
-                    ).join('')}
+                    </label>`;
+                    }).join('')}
                 </div>
-                <p class="nf-field-label" id="rot-block-label" style="display:none;">Block lengths (block rotation only)</p>
+                <p class="nf-field-label" id="rot-block-label" style="display:none;">${escapeHtml(t('srBL'))}</p>
                 <div class="nf-card nf-rot-block-card" id="rot-block-wrap" style="display:none;">
-                    <p class="nf-rot-block-lead">How long does each <strong>run</strong> in the pattern?</p>
+                    <p class="nf-rot-block-lead">${escapeHtml(t('srBRun'))}</p>
                     <div class="nf-rot-block-row">
-                        <span class="nf-rot-block-lab">Nights in a row</span>
+                        <span class="nf-rot-block-lab">${escapeHtml(t('srBR'))}</span>
                         <input type="number" min="1" class="nf-rot-block-num" id="rot-bn" value="14" />
                     </div>
                     <div class="nf-rot-block-row">
-                        <span class="nf-rot-block-lab">Days in a row</span>
+                        <span class="nf-rot-block-lab">${escapeHtml(t('srDIR'))}</span>
                         <input type="number" min="0" class="nf-rot-block-num" id="rot-bd" value="14" />
                     </div>
                     <div class="nf-rot-block-row">
-                        <span class="nf-rot-block-lab">Off days in a row</span>
+                        <span class="nf-rot-block-lab">${escapeHtml(t('srOIR'))}</span>
                         <input type="number" min="0" class="nf-rot-block-num" id="rot-bo" value="0" />
                     </div>
                 </div>
-                <p class="nf-field-label nf-field-label--loose">Work &amp; sleep templates</p>
-                <p class="nf-muted nf-rot-pick-hint" style="margin-top:-2px;">Used on night / day blocks. Off days follow the pattern automatically.</p>
+                <p class="nf-field-label nf-field-label--loose">${escapeHtml(t('srWST'))}</p>
+                <p class="nf-muted nf-rot-pick-hint" style="margin-top:-2px;">${escapeHtml(t('srWSH'))}</p>
                 <div class="nf-rot-tpl-stack">
                     <div class="nf-rot-tpl-card nf-rot-tpl-card--night">
-                        <div class="nf-rot-tpl-card__head">Night shift</div>
-                        <p class="nf-rot-tpl-card__note">For calendar days when the pattern has you on nights.</p>
+                        <div class="nf-rot-tpl-card__head">${escapeHtml(t('srNH'))}</div>
+                        <p class="nf-rot-tpl-card__note">${escapeHtml(t('srNN'))}</p>
                     <div class="nf-rot-tpl-in">
-                    <div class="nf-row"><span class="nf-rot-tpl-lab">Work</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                    <div class="nf-row"><span class="nf-rot-tpl-lab">${escapeHtml(t('work'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
                         '',
                         '19:00',
                         'rn_ws'
                     )}${selectTimeHtml('', '07:00', 'rn_we')}</span></div>
-                    <div class="nf-row" style="margin-top:8px;"><span class="nf-rot-tpl-lab">Sleep</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                    <div class="nf-row" style="margin-top:8px;"><span class="nf-rot-tpl-lab">${escapeHtml(t('sleep'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
                         '',
                         '08:00',
                         'rn_ss'
@@ -1386,30 +1417,30 @@
                     </div>
                     <hr class="rot-day-hr" style="border:none;border-top:1px solid var(--nf-border);margin:0;" />
                     <div class="nf-rot-tpl-card nf-rot-tpl-card--day rot-day-block">
-                        <div class="nf-rot-tpl-card__head">Day shift</div>
-                        <p class="nf-rot-tpl-card__note">For day-work blocks. Hidden if the pattern is nights-only.</p>
+                        <div class="nf-rot-tpl-card__head">${escapeHtml(t('srDH'))}</div>
+                        <p class="nf-rot-tpl-card__note">${escapeHtml(t('srDN'))}</p>
                     <div class="nf-rot-tpl-in">
-                    <div class="nf-row rot-day-block"><span class="nf-rot-tpl-lab">Work</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                    <div class="nf-row rot-day-block"><span class="nf-rot-tpl-lab">${escapeHtml(t('work'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
                         '',
                         '07:00',
                         'rd_ws'
                     )}${selectTimeHtml('', '19:00', 'rd_we')}</span></div>
-                    <div class="nf-row rot-day-block" style="margin-top:8px;"><span class="nf-rot-tpl-lab">Sleep</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                    <div class="nf-row rot-day-block" style="margin-top:8px;"><span class="nf-rot-tpl-lab">${escapeHtml(t('sleep'))}</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
                         '',
                         '22:00',
                         'rd_ss'
                     )}${selectTimeHtml('', '06:00', 'rd_se')}</span></div>
                     </div>
                     </div>
-                    <p class="rot-4n4o-note nf-muted" style="display:none;margin:0 0 0;">Day template isn’t used for this pattern (nights only).</p>
+                    <p class="rot-4n4o-note nf-muted" style="display:none;margin:0 0 0;">${escapeHtml(t('sr4N'))}</p>
                 <div class="nf-rot-tpl-card nf-rot-tpl-card--off">
-                    <div class="nf-rot-tpl-card__head">Off</div>
-                    <p class="nf-rot-tpl-card__note" style="margin:0;">Rest and recovery; sleep lines up to your next work block in the pattern.</p>
+                    <div class="nf-rot-tpl-card__head">${escapeHtml(t('srOH'))}</div>
+                    <p class="nf-rot-tpl-card__note" style="margin:0;">${escapeHtml(t('srON'))}</p>
                 </div>
                 </div>
-                <button type="button" class="nf-cta" id="btn-create-rot">Create schedule</button>
-                <p class="nf-hint-validate">For each template, work and sleep can’t overlap — you’ll be asked to fix it before saving.</p>
-                <p class="nf-sub nf-center">Saves to your account. Today’s plan updates from the pattern.</p>
+                <button type="button" class="nf-cta" id="btn-create-rot">${escapeHtml(t('srCF'))}</button>
+                <p class="nf-hint-validate">${escapeHtml(t('srVH'))}</p>
+                <p class="nf-sub nf-center">${escapeHtml(t('srSub'))}</p>
             </div>`;
         document.getElementById('btn-sr-back').onclick = () => {
             if (state.stack && state.stack.length) back();
@@ -1448,7 +1479,7 @@
             const patternId = getSelectedRotPattern();
             const start = document.getElementById('rot-start').value;
             if (!start) {
-                tg.showAlert('Pick a pattern start date');
+                tg.showAlert(t('alPickDate'));
                 return;
             }
             const nWs = document.getElementById('rn_ws').value;
@@ -1457,7 +1488,7 @@
             const nSe = document.getElementById('rn_se').value;
             const oN = workSleepOverlapError(nWs, nWe, nSs, nSe);
             if (oN) {
-                tg.showAlert('Night template: ' + oN);
+                tg.showAlert(t('alNt') + ' ' + oN);
                 return;
             }
             const body = {
@@ -1477,7 +1508,7 @@
                 const dSe = document.getElementById('rd_se').value;
                 const oD = workSleepOverlapError(dWs, dWe, dSs, dSe);
                 if (oD) {
-                    tg.showAlert('Day template: ' + oD);
+                    tg.showAlert(t('alDt') + ' ' + oD);
                     return;
                 }
                 body.day = {
@@ -1500,8 +1531,9 @@
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
+                    if (err && err.error) console.warn('rotating save', err.error);
                     $root.innerHTML = `<div class="nf-error">${escapeHtml(
-                        err.error || 'Could not save rotating pattern'
+                        t('errRotSave')
                     )}</div>`;
                     return;
                 }
@@ -1512,7 +1544,7 @@
                 await loadUserAndSchedule();
             } catch (e) {
                 console.error(e);
-                $root.innerHTML = '<div class="nf-error">Network error</div>';
+                $root.innerHTML = `<div class="nf-error">${escapeHtml(t('netErrHtml'))}</div>`;
             }
         };
     }
@@ -1520,19 +1552,19 @@
     function mockSuggestions() {
         return [
             {
-                title: '☕ 01:30 COFFEE',
-                body: 'Missed 4 times this week.',
-                action: 'MOVE TO 01:00',
+                title: t('mockCoffT'),
+                body: t('mockCoffB'),
+                action: t('mockCoffA'),
             },
             {
-                title: '🍽️ 02:00 MEAL',
-                body: 'Missed 5 times this week.',
-                action: 'MOVE TO 01:30',
+                title: t('mockMealT'),
+                body: t('mockMealB'),
+                action: t('mockMealA'),
             },
             {
-                title: '😴 SLEEP WINDOW',
-                body: 'Deficit: 8 hours this week.',
-                action: 'ADD 30 MINUTES',
+                title: t('mockSleepT'),
+                body: t('mockSleepB'),
+                action: t('mockSleepA'),
             },
         ];
     }
@@ -1606,7 +1638,7 @@
 
     function formatRecWindowList(arr) {
         if (!arr || !arr.length) {
-            return '<p class="nf-rec-empty">No suggested times here — your sleep window may be very short today.</p>';
+            return `<p class="nf-rec-empty">${escapeHtml(t('recEmp'))}</p>`;
         }
         return arr
             .map(
@@ -1627,58 +1659,48 @@
             `<div class="nf-rec-root">
                 <div class="nf-rec-hero">
                     <div class="nf-rec-hero-moon" aria-hidden="true">🌙</div>
-                    <h2 class="nf-rec-title">Rest day plan</h2>
-                    <p class="nf-rec-sub">Recommended sleep, eating, caffeine, and light — tuned to today’s off pattern.</p>
+                    <h2 class="nf-rec-title">${escapeHtml(t('recTi'))}</h2>
+                    <p class="nf-rec-sub">${escapeHtml(t('recSu'))}</p>
                 </div>
                 ${advice}
                 <section class="nf-rec-section nf-rec-section--sleep">
-                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">😴</span> Recommended sleep</h3>
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">😴</span> ${escapeHtml(
+                        t('recSH')
+                    )}</h3>
                     <div class="nf-rec-sleep-pill">
                         <span class="nf-rec-sleep-time">${escapeHtml(formatTime(sched.sleep_start))}</span>
                         <span class="nf-rec-sleep-sep">→</span>
                         <span class="nf-rec-sleep-time">${escapeHtml(formatTime(sched.sleep_end))}</span>
                     </div>
-                    <p class="nf-rec-sec-note">Treat this as your main sleep anchor for recovery before the next work block.</p>
+                    <p class="nf-rec-sec-note">${escapeHtml(t('recSN'))}</p>
                 </section>
                 <section class="nf-rec-section">
-                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">☕</span> Coffee &amp; caffeine</h3>
-                    <p class="nf-rec-sec-note">Suggested windows — cut off caffeine several hours before you lie down.</p>
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">☕</span> ${escapeHtml(
+                        t('recCH')
+                    )}</h3>
+                    <p class="nf-rec-sec-note">${escapeHtml(t('recCHs'))}</p>
                     <div class="nf-rec-slot-list">${formatRecWindowList(sched.coffee_windows)}</div>
                 </section>
                 <section class="nf-rec-section">
-                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">🍽</span> Eating</h3>
-                    <p class="nf-rec-sec-note">When to aim for meals — lighter toward bedtime.</p>
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">🍽</span> ${escapeHtml(
+                        t('recEH')
+                    )}</h3>
+                    <p class="nf-rec-sec-note">${escapeHtml(t('recEHm'))}</p>
                     <div class="nf-rec-slot-list">${formatRecWindowList(sched.meal_windows)}</div>
                 </section>
                 <section class="nf-rec-section">
-                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">💡</span> Light &amp; screens</h3>
-                    <p class="nf-rec-sec-note">Bright after wake; dim and softer screens as sleep approaches.</p>
+                    <h3 class="nf-rec-sec-h"><span class="nf-rec-sec-ico" aria-hidden="true">💡</span> ${escapeHtml(
+                        t('recLH')
+                    )}</h3>
+                    <p class="nf-rec-sec-note">${escapeHtml(t('recLs'))}</p>
                     <div class="nf-rec-slot-list">${formatRecWindowList(sched.brightness_windows)}</div>
                 </section>
-                <button type="button" class="nf-cta nf-cta-secondary" id="nf-rec-done">Done</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="nf-rec-done">${escapeHtml(t('recDo'))}</button>
             </div>`,
             { sheetClass: 'nf-rec-modal' }
         );
         const done = document.getElementById('nf-rec-done');
         if (done) done.onclick = closeModal;
-    }
-
-    function mockTransition() {
-        return {
-            headline: 'In 2 days, you switch to Day Shift',
-            blocks: [
-                {
-                    title: 'TOMORROW (Last Night)',
-                    lines: ['Sleep: 08:00 – 12:00 (4h)', 'Awake: 12:00 – 22:00 (10h)'],
-                },
-                {
-                    title: 'DAY AFTER (First Day)',
-                    lines: ['Sleep: 22:00 – 06:00', 'Work: 06:00 – 14:00'],
-                },
-            ],
-            caffeine: 'Stop by 16:00',
-            light: 'Bright after waking, dim by 20:00',
-        };
     }
 
     function renderDashboard() {
@@ -1722,7 +1744,7 @@
                         rotating && (sched.pattern_slot || sched.pattern_id)
                             ? (() => {
                                   const pm = patternMetaFromId(sched.pattern_id);
-                                  const sl = formatPatternSlot(sched.pattern_slot) || 'Today';
+                                  const sl = formatPatternSlot(sched.pattern_slot) || t('slotToday');
                                   return `<div class="nf-pattern-today" role="status">
         <span class="nf-pattern-today-ico" aria-hidden="true">${escapeHtml(pm.icon)}</span>
         <div class="nf-pattern-today-text">
@@ -1926,9 +1948,9 @@
                       day: 'numeric',
                   });
             return `<div class="nf-day-block">
-                <p class="nf-day-head">${escapeHtml(dPretty)} · <strong>OFF</strong></p>
+                <p class="nf-day-head">${escapeHtml(dPretty)} · <strong>${escapeHtml(t('plOFF'))}</strong></p>
                 <p class="nf-muted" style="margin:4px 0 0;">${
-                    sched && sched.transition_advice ? escapeHtml(sched.transition_advice) : 'Rest and recovery.'
+                    sched && sched.transition_advice ? escapeHtml(sched.transition_advice) : escapeHtml(t('plRest'))
                 }</p>
             </div>`;
         }
@@ -1943,15 +1965,13 @@
         const stu = (sched.shift_type || '').toUpperCase();
         const trBadge =
             sched.is_transition_day === true
-                ? '<span class="nf-tr-pill" title="System-managed reminders">TRANSITION</span> '
+                ? `<span class="nf-tr-pill" title="${escapeHtml(t('plTRt'))}">${escapeHtml(t('plTR'))}</span> `
                 : '';
         const evs = collectEvents(sched);
         const hasBridge =
             evs.some((x) => x.kind === 'work_end') && evs.some((x) => x.kind === 'sleep_start');
         const lines = buildTimelineListHtml(sched);
-        const bridge = hasBridge
-            ? '<p class="nf-tl-bridge">Wind down from work into sleep — your recovery window is below.</p>'
-            : '';
+        const bridge = hasBridge ? `<p class="nf-tl-bridge">${escapeHtml(t('plBridge'))}</p>` : '';
         const advice = sched.transition_advice
             ? `<p class="nf-day-advice nf-muted">${escapeHtml(sched.transition_advice)}</p>`
             : '';
@@ -1961,7 +1981,7 @@
         const well =
             !sched.is_transition_day && Array.isArray(sched.wellness_suggestions) && sched.wellness_suggestions.length
                 ? `<div class="nf-wellness-hint">
-                    <div class="nf-card-label" style="margin:0 0 6px;">Tips (optional)</div>
+                    <div class="nf-card-label" style="margin:0 0 6px;">${escapeHtml(t('plTipH'))}</div>
                     ${sched.wellness_suggestions
                         .map(
                             (x) => `<p class="nf-muted" style="margin:0 0 4px 0;">${escapeHtml(x)}</p>`
@@ -1992,7 +2012,7 @@
     }
 
     function renderFullSchedule() {
-        $root.innerHTML = '<div class="nf-loading">Loading…</div>';
+        $root.innerHTML = `<div class="nf-loading">${escapeHtml(t('loadFull'))}</div>`;
 
         (async () => {
             const n = hasProEntitlement() ? (state.fullScheduleRange || 1) : 1;
@@ -2028,7 +2048,7 @@
                 } else {
                     $root.innerHTML = `<div class="nf-screen nf-screen--tabbed"><div class="nf-tabbar-body">
                     ${topbarMainTabPage(t('schedPage'))}
-                    <p class="nf-muted" style="padding:0 4px 12px;">No events for this view.</p>
+                    <p class="nf-muted" style="padding:0 4px 12px;">${escapeHtml(t('fsNoEv'))}</p>
                 </div>${getMainTabBarHtml()}</div>`;
                     bindMainTabBar();
                     wireMainTabTopbar();
@@ -2038,27 +2058,25 @@
 
             const multi = hasProEntitlement() && n > 1;
             const rangeBlock = hasProEntitlement()
-                ? `<div class="nf-full-range" role="group" aria-label="Date range">
-                    <span class="nf-full-range-lab">Show</span>
+                ? `<div class="nf-full-range" role="group" aria-label="${escapeHtml(t('schedPage'))}">
+                    <span class="nf-full-range-lab">${escapeHtml(t('fsLab'))}</span>
                     <button type="button" class="nf-chip-range${
                         n === 1 ? ' is-active' : ''
-                    }" data-range="1" aria-pressed="${n === 1}">Today</button>
+                    }" data-range="1" aria-pressed="${n === 1}">${escapeHtml(t('fsD1'))}</button>
                     <button type="button" class="nf-chip-range${
                         n === 3 ? ' is-active' : ''
-                    }" data-range="3" aria-pressed="${n === 3}">3 days</button>
+                    }" data-range="3" aria-pressed="${n === 3}">${escapeHtml(t('fsD3'))}</button>
                     <button type="button" class="nf-chip-range${
                         n === 7 ? ' is-active' : ''
-                    }" data-range="7" aria-pressed="${n === 7}">7 days</button>
+                    }" data-range="7" aria-pressed="${n === 7}">${escapeHtml(t('fsD7'))}</button>
                 </div>`
                 : '';
             const foot =
                 isRotatingUi() && hasProEntitlement()
-                    ? `<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">Transition: reminders ${
-                          trRem ? 'on' : 'off'
-                      }, starting ${escapeHtml(trLead)} day${
-                          String(trLead) === '1' ? '' : 's'
-                      } before a switch. Adjust in Settings if needed — days marked TRANSITION use the system plan for coffee, meals, and light.</p>`
-                    : '<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">Types: work, sleep, coffee, meal, light — labels on the left match each row.</p>';
+                    ? `<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">${escapeHtml(
+                          t('plTF', trRem, trLead)
+                      )}</p>`
+                    : `<p class="nf-muted nf-schedule-foot" style="margin-top:8px;">${escapeHtml(t('plFoot'))}</p>`;
 
             const dayBlocks = (days || [])
                 .map((d) => daySectionHtml(d, multi))
@@ -2095,7 +2113,7 @@
     }
 
     function renderSuggestions() {
-        $root.innerHTML = '<div class="nf-loading">Loading...</div>';
+        $root.innerHTML = `<div class="nf-loading">${escapeHtml(t('loadFull'))}</div>`;
 
         (async () => {
             let items = mockSuggestions();
@@ -2133,25 +2151,31 @@
                             <div class="nf-sug-actions">
                                 <button type="button" class="nf-btn-sug-ignore js-sug-ignore" data-fp="${escapeHtml(
                                     suggestionFingerprint(it)
-                                )}">Ignore</button>
-                                <button type="button" class="nf-btn-sug-settings js-sug-adj" data-orig-idx="${origIdx}">Adjust in settings</button>
+                                )}">${escapeHtml(t('sugIg'))}</button>
+                                <button type="button" class="nf-btn-sug-settings js-sug-adj" data-orig-idx="${origIdx}">${escapeHtml(
+                                    t('sugAdj')
+                                )}</button>
                             </div>
                             </div>
                         </div>`
                       )
                       .join('')
-                : `<div class="nf-card nf-center"><div style="font-weight:600;">No suggestions right now.</div><div class="nf-muted" style="margin-top:6px;">Keep logging your day — or clear ignored items from earlier.</div></div>`;
+                : `<div class="nf-card nf-center"><div style="font-weight:600;">${escapeHtml(
+                      t('sugEm')
+                  )}</div><div class="nf-muted" style="margin-top:6px;">${escapeHtml(t('sugEm2'))}</div></div>`;
 
             $root.innerHTML = `
                 <div class="nf-screen nf-sug-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
                     ${topbarMainTabPage(t('ideasPage'))}
-                    <p class="nf-sug-lead">Select one or more ideas, then apply in one go. Ignored items stay hidden.</p>
+                    <p class="nf-sug-lead">${escapeHtml(t('sugL'))}</p>
                     ${sugRows}
                     ${
                         visible.length
                             ? `<div class="nf-sug-apply-bar">
-                        <button type="button" class="nf-cta" id="btn-sug-apply" disabled>Apply selected</button>
+                        <button type="button" class="nf-cta" id="btn-sug-apply" disabled>${escapeHtml(
+                            t('sugAp')
+                        )}</button>
                     </div>`
                             : ''
                     }
@@ -2167,7 +2191,7 @@
                 if (!applyBtn) return;
                 const n = $root.querySelectorAll('.nf-sug-cb:checked').length;
                 applyBtn.disabled = n < 1;
-                applyBtn.textContent = n < 1 ? 'Apply selected' : `Apply selected (${n})`;
+                applyBtn.textContent = n < 1 ? t('sugAp') : t('sugApN', n);
             };
             $root.querySelectorAll('.nf-sug-cb').forEach((cb) => {
                 cb.addEventListener('change', syncApplyEnabled);
@@ -2204,9 +2228,8 @@
                         });
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) {
-                            tg.showAlert(
-                                (data && data.error) || 'Could not apply. Try again or apply one at a time.'
-                            );
+                            if (data && data.error) console.warn('suggestions apply', data.error);
+                            tg.showAlert(t('errApply'));
                             applyBtn.removeAttribute('disabled');
                             return;
                         }
@@ -2219,14 +2242,14 @@
                             if (!ok) console.warn('reload after suggestion apply');
                         }
                         tg.showAlert(
-                            `Updated ${(data && data.applied) || selected.length} suggestion${
-                                (data && data.applied) === 1 ? '' : 's'
-                            }.`
+                            (data && data.applied) === 1
+                                ? t('sugUp1')
+                                : t('sugUp', (data && data.applied) || selected.length)
                         );
                         renderSuggestions();
                     } catch (e) {
                         console.warn('apply suggestions', e);
-                        tg.showAlert('Could not apply. Check your connection.');
+                        tg.showAlert(t('errApplyNet'));
                     }
                     applyBtn.removeAttribute('disabled');
                 });
@@ -2235,16 +2258,30 @@
     }
 
     function renderTransition() {
-        const m = mockTransition();
+        const m = {
+            headline: t('trH'),
+            blocks: [
+                {
+                    title: t('trB1'),
+                    lines: [t('trL1a'), t('trL1b')],
+                },
+                {
+                    title: t('trB2'),
+                    lines: [t('trL2a'), t('trL2b')],
+                },
+            ],
+            caffeine: t('trCaf'),
+            light: t('trLgt'),
+        };
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="btr">← BACK</button>
-                    <h1>Night → Day</h1>
+                    <button type="button" class="nf-back" id="btr">← ${escapeHtml(t('back'))}</button>
+                    <h1>${escapeHtml(t('trT'))}</h1>
                     <span></span>
                 </div>
                 <p style="font-weight:600;">📅 ${escapeHtml(m.headline)}</p>
-                <p class="nf-field-label">YOUR TRANSITION PLAN</p>
+                <p class="nf-field-label">${escapeHtml(t('trP'))}</p>
                 ${m.blocks
                     .map(
                         (b) => `
@@ -2254,17 +2291,16 @@
                 </div>`
                     )
                     .join('')}
-                <p>☕ CAFFEINE: ${escapeHtml(m.caffeine)}</p>
-                <p>💡 LIGHT: ${escapeHtml(m.light)}</p>
-                <button type="button" class="nf-cta" id="btn-rem">SET REMINDERS</button>
+                <p>☕ ${escapeHtml(t('trCa'))}: ${escapeHtml(m.caffeine)}</p>
+                <p>💡 ${escapeHtml(t('trLi'))}: ${escapeHtml(m.light)}</p>
+                <button type="button" class="nf-cta" id="btn-rem">${escapeHtml(t('trSetR'))}</button>
             </div>`;
         document.getElementById('btr').onclick = back;
-        document.getElementById('btn-rem').onclick = () =>
-            tg.showAlert('Reminder scheduling hooks to the bot when live.');
+        document.getElementById('btn-rem').onclick = () => tg.showAlert(t('trSetR'));
     }
 
     function renderWeekly() {
-        $root.innerHTML = '<div class="nf-loading">Loading...</div>';
+        $root.innerHTML = `<div class="nf-loading">${escapeHtml(t('loadFull'))}</div>`;
 
         (async () => {
             let w = mockWeekly();
@@ -2328,7 +2364,9 @@
                         <p class="nf-week-block-desc">${escapeHtml(t('wkMoodB'))}</p>
                     <div class="nf-card nf-week-hero nf-week-mood-card">
                         <div class="nf-week-hero-row">
-                            <div class="nf-donut nf-donut--mood" style="background:${moodBg};" role="img" aria-label="Energy distribution for the week">
+                            <div class="nf-donut nf-donut--mood" style="background:${moodBg};" role="img" aria-label="${escapeHtml(
+                t('wkEgy')
+            )}">
                                 <div class="nf-donut-hole"></div>
                             </div>
                             <div class="nf-week-hero-copy">
@@ -2349,14 +2387,16 @@
                         <p class="nf-week-section-h">${escapeHtml(t('wkByDay'))}</p>
                         <p class="nf-week-section-sub">${escapeHtml(t('wkByDayB'))}</p>
                         <div class="nf-week-energy">
-                        ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                        ${[0, 1, 2, 3, 4, 5, 6]
                             .map(
-                                (d, i) =>
-                                    `<div class="nf-week-day ${energyDayClass(
+                                (i) => {
+                                    const d = t('wkD' + i);
+                                    return `<div class="nf-week-day ${energyDayClass(
                                         w.energy ? w.energy[i] : '—'
-                                    )}"><span class="nf-week-dow">${d}</span><span class="nf-week-emo" title="${d}">${
-                                        w.energy?.[i] || '—'
-                                    }</span></div>`
+                                    )}"><span class="nf-week-dow">${d}</span><span class="nf-week-emo" title="${escapeHtml(
+                                        d
+                                    )}">${w.energy?.[i] || '—'}</span></div>`;
+                                }
                             )
                             .join('')}
                         </div>
@@ -2467,36 +2507,38 @@
         $root.innerHTML = `
             <div class="nf-screen">
                 <div class="nf-topbar">
-                    <button type="button" class="nf-back" id="bdof">← BACK</button>
-                    <h1>Day Off</h1>
+                    <button type="button" class="nf-back" id="bdof">← ${escapeHtml(t('back'))}</button>
+                    <h1>${escapeHtml(t('dofT'))}</h1>
                     <span></span>
                 </div>
                 <div class="nf-emoji-big nf-center">😴</div>
-                <h2 class="nf-center nf-title">DAY OFF MODE</h2>
-                <p class="nf-center nf-muted">No notifications today.</p>
-                <p class="nf-field-label">RESUME</p>
+                <h2 class="nf-center nf-title">${escapeHtml(t('dofM'))}</h2>
+                <p class="nf-center nf-muted">${escapeHtml(t('dofNN'))}</p>
+                <p class="nf-field-label">${escapeHtml(t('dofR'))}</p>
                 <div class="nf-card nf-select-card">
                     <label class="nf-option">
                         <input type="radio" name="resume" value="tomorrow" checked />
-                        <div class="nf-option-body"><strong>Tomorrow</strong></div>
+                        <div class="nf-option-body"><strong>${escapeHtml(t('dofTmr'))}</strong></div>
                     </label>
                     <label class="nf-option">
                         <input type="radio" name="resume" value="date" />
-                        <div class="nf-option-body"><strong>On date</strong></div>
+                        <div class="nf-option-body"><strong>${escapeHtml(t('dofDt'))}</strong></div>
                     </label>
                     <div style="padding:0 16px 12px;">
                         <input type="date" id="dof-date" class="nf-select" value="${today}" />
                     </div>
                     <label class="nf-option">
                         <input type="radio" name="resume" value="manual" />
-                        <div class="nf-option-body"><strong>Manually (/resume)</strong></div>
+                        <div class="nf-option-body"><strong>${escapeHtml(t('dofMan'))}</strong></div>
                     </label>
                 </div>
                 <div class="nf-row-btns">
-                    <button type="button" class="nf-cta" id="dof-confirm">CONFIRM</button>
-                    <button type="button" class="nf-cta nf-cta-secondary" id="dof-keep">KEEP WORKING</button>
+                    <button type="button" class="nf-cta" id="dof-confirm">${escapeHtml(t('dofC'))}</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="dof-keep">${escapeHtml(t('dofK'))}</button>
                 </div>
-                <button type="button" class="nf-cta nf-cta-secondary" id="dof-dash" style="margin-top:12px;">BACK TO DASHBOARD</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="dof-dash" style="margin-top:12px;">${escapeHtml(
+                    t('dofBD')
+                )}</button>
             </div>`;
         document.getElementById('bdof').onclick = back;
         document.getElementById('dof-dash').onclick = back;
@@ -2511,7 +2553,7 @@
                 if (!res.ok) throw new Error('bad');
                 await loadUserAndSchedule();
             } catch (e) {
-                tg.showAlert('Could not set day off');
+                tg.showAlert(t('errSaveG'));
                 render();
             }
         };
@@ -2543,10 +2585,7 @@
     function leadDaysOptionsHtml(val) {
         const v = String(val || '3');
         return [1, 2, 3]
-            .map(
-                (n) =>
-                    `<option value="${n}"${String(n) === v ? ' selected' : ''}>${n} day${n > 1 ? 's' : ''}</option>`
-            )
+            .map((n) => `<option value="${n}"${String(n) === v ? ' selected' : ''}>${n}d</option>`)
             .join('');
     }
 
@@ -2557,33 +2596,37 @@
             <div class="nf-screen nf-screen--tabbed nf-free-settings">
                 <div class="nf-tabbar-body">
                 ${topbarMainTabPage(t('stTitle'))}
-                <p class="nf-free-settings-lead">Upgrade to Pro to customize your schedule.</p>
+                ${languagePickerHtml()}
+                <p class="nf-free-settings-lead">${escapeHtml(t('stFreeL'))}</p>
                 <div class="nf-card nf-free-readonly">
-                    <h3 class="nf-free-h3">📅 Work &amp; sleep</h3>
-                    <div>WORK: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(
+                    <h3 class="nf-free-h3">📅 ${escapeHtml(t('stFreeWS'))}</h3>
+                    <div>${escapeHtml(t('work'))}: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(
             formatTime(sched?.work_end)
         )}</div>
-                    <div style="margin-top:8px;">SLEEP: ${escapeHtml(
+                    <div style="margin-top:8px;">${escapeHtml(t('sleep'))}: ${escapeHtml(
                         formatTime(sched?.sleep_start)
                     )} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
                 </div>
                 <div class="nf-card nf-free-readonly">
-                    <h3 class="nf-free-h3">☕ · 🍽️ · 💡</h3>
-                    <p class="nf-free-note">Coffee, meal, and light times are part of Pro — with smart reminders tuned to your shift.</p>
+                    <h3 class="nf-free-h3">☕ · 🍽 · 💡</h3>
+                    <p class="nf-free-note">${escapeHtml(t('stFreeCM'))}</p>
                 </div>
                 <div class="nf-card nf-free-readonly">
-                    <h3 class="nf-free-h3">⏰ Notifications &amp; timezone</h3>
-                    <p class="nf-free-note">Pro unlocks notification controls, weekly insights, and timezone changes.</p>
-                    <p class="nf-free-tz" style="margin:10px 0 0 0;">Current timezone: <strong>${escapeHtml(
+                    <h3 class="nf-free-h3">⏰ ${escapeHtml(t('stNotif'))} · ${escapeHtml(t('stTZ'))}</h3>
+                    <p class="nf-free-note">${escapeHtml(t('stFreeN'))}</p>
+                    <p class="nf-free-tz" style="margin:10px 0 0 0;">${escapeHtml(t('stTZ'))}: <strong>${escapeHtml(
                         tz
                     )}</strong></p>
                 </div>
-                <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-pro">Upgrade to Pro</button>
+                <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-pro">${escapeHtml(
+                    t('proBannerBtn')
+                )}</button>
                 </div>
                 ${getMainTabBarHtml()}
             </div>`;
         wireMainTabTopbar();
         bindMainTabBar();
+        wireAppLanguagePills();
         document.getElementById('btn-settings-pro').onclick = () => openProInvoice();
     }
 
@@ -2605,8 +2648,8 @@
             ? `<div class="nf-pro-status-compact" role="status">
                     <span class="nf-pro-status-ico" aria-hidden="true">✓</span>
                     <div class="nf-pro-status-txt">
-                        <span class="nf-pro-status-title">Pro active</span>
-                        <span class="nf-pro-status-sub">Active until <strong>${escapeHtml(
+                        <span class="nf-pro-status-title">${escapeHtml(t('stActive'))}</span>
+                        <span class="nf-pro-status-sub">${escapeHtml(t('stProUntil'))} <strong>${escapeHtml(
                             formatProExpiresUser() || '—'
                         )}</strong></span>
                     </div>
@@ -2615,18 +2658,24 @@
         const trialPayBlock =
             hasProEntitlement() && !paidPro
                 ? `<div class="nf-card nf-card-cta">
-                        <h3 class="nf-free-h3" style="margin:0 0 6px;">Keep Pro with Stars</h3>
-                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 12px;">${stars} Stars / 30 days in Telegram. Extends Pro after your trial.</p>
-                        <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-stars">Pay with Stars</button>
+                        <h3 class="nf-free-h3" style="margin:0 0 6px;">${escapeHtml(t('stKeep'))}</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 12px;">${escapeHtml(
+                            t('stKeepD', stars)
+                        )}</p>
+                        <button type="button" class="nf-btn-pro nf-btn-pro-wide" id="btn-settings-stars">${escapeHtml(
+                            t('stPayStars')
+                        )}</button>
                    </div>`
                 : '';
         const billingBlock = canCancel
             ? `<div class="nf-card nf-billing-box">
-                    <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 Pro billing</h3>
-                    <p class="nf-muted" style="margin:0;font-size:0.86rem;line-height:1.45;">Recurring in Telegram. To <strong>stop auto-renewal</strong>, open the <strong>Nightflow bot</strong> in Telegram and send <code class="nf-code-inline">/cancel</code> there. You keep Pro until the end of your paid period.</p>
+                    <h3 class="nf-free-h3" style="margin:0 0 8px;">💳 ${escapeHtml(t('stBill'))}</h3>
+                    <p class="nf-muted" style="margin:0;font-size:0.86rem;line-height:1.45;">${escapeHtml(
+                        t('stBillH')
+                    )}</p>
                 </div>`
             : subCancelled && proExp
-            ? `<p class="nf-billing-notice">Your subscription will not renew. You keep Pro access until <strong>${escapeHtml(
+            ? `<p class="nf-billing-notice">${escapeHtml(t('stNorenew'))} <strong>${escapeHtml(
                   formatProExpiryDate(proExp)
               )}</strong>.</p>`
             : '';
@@ -2634,7 +2683,7 @@
         const rotPatMeta = patternMetaFromId(rsX.pattern_id);
         const nX = rsX.night || {};
         const dX = rsX.day || {};
-        const wsnX = (t) => escapeHtml(formatTime(t) || '—');
+        const wsnX = (tm) => escapeHtml(formatTime(tm) || '—');
         const pStart = state.rotatingPattern?.pattern_start_date;
         let pStartNice = '—';
         if (pStart) {
@@ -2651,27 +2700,31 @@
         const workSleepBlock = isRotatingServer()
             ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>🌙 NIGHT (template)</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-rot-n">Edit</button>
+                        <h3>🌙 ${escapeHtml(t('stNt'))} · ${escapeHtml(t('stTpl'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-rot-n">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">
-                        <div>WORK: ${wsnX(nX.work_start)} – ${wsnX(nX.work_end)}</div>
-                        <div style="margin-top:6px;">SLEEP: ${wsnX(nX.sleep_start)} – ${wsnX(nX.sleep_end)}</div>
+                        <div>${escapeHtml(t('work'))}: ${wsnX(nX.work_start)} – ${wsnX(nX.work_end)}</div>
+                        <div style="margin-top:6px;">${escapeHtml(t('sleep'))}: ${wsnX(nX.sleep_start)} – ${wsnX(
+                  nX.sleep_end
+              )}</div>
                     </div>
                 </div>
                 ${
                     patternHasDayWork()
                         ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>☀️ DAY (template)</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-rot-d">Edit</button>
+                        <h3>☀️ ${escapeHtml(t('stDt'))} · ${escapeHtml(t('stTpl'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-rot-d">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">
-                        <div>WORK: ${wsnX(dX.work_start)} – ${wsnX(dX.work_end)}</div>
-                        <div style="margin-top:6px;">SLEEP: ${wsnX(dX.sleep_start)} – ${wsnX(dX.sleep_end)}</div>
+                        <div>${escapeHtml(t('work'))}: ${wsnX(dX.work_start)} – ${wsnX(dX.work_end)}</div>
+                        <div style="margin-top:6px;">${escapeHtml(t('sleep'))}: ${wsnX(dX.sleep_start)} – ${wsnX(
+                  dX.sleep_end
+              )}</div>
                     </div>
                 </div>`
-                        : `<p class="nf-muted" style="padding:0 2px 8px;">Day template hidden — this pattern has no day shifts.</p>`
+                        : `<p class="nf-muted" style="padding:0 2px 8px;">${escapeHtml(t('stDayHid'))}</p>`
                 }
                 <div class="nf-card nf-card-pattern-info">
                     <div class="nf-pattern-info-head">
@@ -2683,72 +2736,74 @@
                     </div>
                     <div class="nf-pattern-info-stats">
                         <div class="nf-pattern-stat">
-                            <span class="nf-pattern-stat-l">Cycle</span>
+                            <span class="nf-pattern-stat-l">${escapeHtml(t('stCycle'))}</span>
                             <span class="nf-pattern-stat-v">${escapeHtml(rotPatMeta.days || '—')}</span>
                         </div>
                         <div class="nf-pattern-stat">
-                            <span class="nf-pattern-stat-l">Pattern start</span>
+                            <span class="nf-pattern-stat-l">${escapeHtml(t('stAnchor'))}</span>
                             <span class="nf-pattern-stat-v">${escapeHtml(pStartNice)}</span>
                         </div>
                     </div>
-                    <p class="nf-pattern-info-anchor-hint">The pattern moves forward <strong>one calendar day at a time</strong> from this anchor. If work/off days look wrong, use <strong>Change schedule type</strong> below and set the anchor to the first day of your real rotation.</p>
+                    <p class="nf-pattern-info-anchor-hint">${escapeHtml(t('stAnchorH'))}</p>
                 </div>`
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>📅 WORK & SLEEP</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-ws">Edit</button>
+                        <h3>📅 ${escapeHtml(t('stWS'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-ws">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">
-                        <div>WORK: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(formatTime(sched?.work_end))}</div>
-                        <div style="margin-top:6px;">SLEEP: ${escapeHtml(formatTime(sched?.sleep_start))} – ${escapeHtml(
-                  formatTime(sched?.sleep_end)
+                        <div>${escapeHtml(t('work'))}: ${escapeHtml(formatTime(sched?.work_start))} – ${escapeHtml(
+                  formatTime(sched?.work_end)
               )}</div>
+                        <div style="margin-top:6px;">${escapeHtml(t('sleep'))}: ${escapeHtml(
+                  formatTime(sched?.sleep_start)
+              )} – ${escapeHtml(formatTime(sched?.sleep_end))}</div>
                     </div>
                 </div>`;
         const planWindowsBlock = isRotatingServer()
             ? `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>Reminders (templates)</h3>
+                        <h3>${escapeHtml(t('stRemTpl'))} · ${escapeHtml(t('stTpl'))}</h3>
                     </div>
-                    <p class="nf-muted" style="font-size:0.84rem;margin:0 0 10px;line-height:1.4;">
-                        Edit <strong>night</strong> and <strong>day</strong> templates. On <strong>transition</strong> days, Nightflow may use a fixed plan for coffee, meals, and light so your sleep plan stays on track. Other days: optional wellness tips in Weekly.
-                    </p>
+                    <p class="nf-muted" style="font-size:0.84rem;margin:0 0 10px;line-height:1.4;">${escapeHtml(
+                        t('stRemL')
+                    )}</p>
                     <div class="nf-card">
-                        <div class="nf-rot-win-head">🌙 Night shift</div>
+                        <div class="nf-rot-win-head">🌙 ${escapeHtml(t('stNt'))}</div>
                         <div class="nf-rot-win-row">
-                            <span class="nf-rot-win-k">☕ Coffee</span>
-                            <button type="button" class="nf-btn-edit" id="er-n-co">Edit</button>
+                            <span class="nf-rot-win-k">☕ ${escapeHtml(t('stCoff'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-co">${escapeHtml(t('stEdit'))}</button>
                         </div>
                         <div class="nf-rot-win-row">
-                            <span class="nf-rot-win-k">🍽 Meals</span>
-                            <button type="button" class="nf-btn-edit" id="er-n-me">Edit</button>
+                            <span class="nf-rot-win-k">🍽 ${escapeHtml(t('stMeal'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-me">${escapeHtml(t('stEdit'))}</button>
                         </div>
                         <div class="nf-rot-win-row" style="margin-bottom:0;">
-                            <span class="nf-rot-win-k">💡 Light</span>
-                            <button type="button" class="nf-btn-edit" id="er-n-li">Edit</button>
+                            <span class="nf-rot-win-k">💡 ${escapeHtml(t('stLight'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-n-li">${escapeHtml(t('stEdit'))}</button>
                         </div>
                     </div>
                     ${
                         patternHasDayWork()
                             ? `<div class="nf-card" style="margin-top:10px;">
-                        <div class="nf-rot-win-head">☀️ Day shift</div>
+                        <div class="nf-rot-win-head">☀️ ${escapeHtml(t('stDt'))}</div>
                         <div class="nf-rot-win-row">
-                            <span class="nf-rot-win-k">☕ Coffee</span>
-                            <button type="button" class="nf-btn-edit" id="er-d-co">Edit</button>
+                            <span class="nf-rot-win-k">☕ ${escapeHtml(t('stCoff'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-co">${escapeHtml(t('stEdit'))}</button>
                         </div>
                         <div class="nf-rot-win-row">
-                            <span class="nf-rot-win-k">🍽 Meals</span>
-                            <button type="button" class="nf-btn-edit" id="er-d-me">Edit</button>
+                            <span class="nf-rot-win-k">🍽 ${escapeHtml(t('stMeal'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-me">${escapeHtml(t('stEdit'))}</button>
                         </div>
                         <div class="nf-rot-win-row" style="margin-bottom:0;">
-                            <span class="nf-rot-win-k">💡 Light</span>
-                            <button type="button" class="nf-btn-edit" id="er-d-li">Edit</button>
+                            <span class="nf-rot-win-k">💡 ${escapeHtml(t('stLight'))}</span>
+                            <button type="button" class="nf-btn-edit" id="er-d-li">${escapeHtml(t('stEdit'))}</button>
                         </div>
                     </div>`
                             : ''
                     }
                     <div class="nf-card" style="margin-top:10px;">
-                        <div class="nf-muted" style="margin-bottom:6px;">Today’s preview (computed)</div>
+                        <div class="nf-muted" style="margin-bottom:6px;">${escapeHtml(t('stPrvC'))}</div>
                         <div><span class="nf-evt-coffee">☕</span> ${coffeeSummary(sched)}</div>
                         <div style="margin-top:6px;"><span class="nf-evt-meal">🍽</span> ${mealSummary(sched)}</div>
                         <div style="margin-top:6px;"><span class="nf-evt-light">💡</span> ${lightSummary(sched)}</div>
@@ -2756,22 +2811,22 @@
                 </div>`
             : `<div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>☕ COFFEE TIMES</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-co">Edit</button>
+                        <h3>☕ ${escapeHtml(t('stCoff'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-co">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">${coffeeSummary(sched)}</div>
                 </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>🍽️ MEAL TIMES</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-me">Edit</button>
+                        <h3>🍽 ${escapeHtml(t('stMeal'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-me">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">${mealSummary(sched)}</div>
                 </div>
                 <div class="nf-setting-block">
                     <div class="nf-setting-head">
-                        <h3>💡 LIGHT REMINDERS</h3>
-                        <button type="button" class="nf-btn-edit" id="ed-li">Edit</button>
+                        <h3>💡 ${escapeHtml(t('stLight'))}</h3>
+                        <button type="button" class="nf-btn-edit" id="ed-li">${escapeHtml(t('stEdit'))}</button>
                     </div>
                     <div class="nf-card">${lightSummary(sched)}</div>
                 </div>`;
@@ -2780,40 +2835,45 @@
             isRotatingServer();
         const scheduleTypeCard = showScheduleTypeCard
             ? `<div class="nf-card nf-settings-action-card nf-card-schedule-type">
-                        <h3 class="nf-free-h3" style="margin:0 0 8px;">Schedule type</h3>
-                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.4;">Open the first step to use a <strong>permanent</strong> (fixed) schedule or a <strong>rotating</strong> pattern. Your current setup stays until you continue on the next screen.</p>
-                        <button type="button" class="nf-btn-schedule-type" id="btn-change-schedule-type">Change schedule type</button>
+                        <h3 class="nf-free-h3" style="margin:0 0 8px;">${escapeHtml(t('stSchType'))}</h3>
+                        <p class="nf-muted" style="font-size:0.86rem;margin:0 0 10px;line-height:1.4;">${escapeHtml(
+                            t('stSchTypeH')
+                        )}</p>
+                        <button type="button" class="nf-btn-schedule-type" id="btn-change-schedule-type">${escapeHtml(
+                            t('stSchTypeBtn')
+                        )}</button>
                    </div>`
             : '';
         $root.innerHTML = `
             <div class="nf-screen nf-screen--tabbed">
                 <div class="nf-tabbar-body">
                 ${topbarMainTabPage(t('stTitle'))}
+                ${languagePickerHtml()}
                 ${paidNotice}
                 ${trialPayBlock}
                 ${workSleepBlock}
                 ${planWindowsBlock}
                 ${scheduleTypeCard}
-                <p class="nf-field-label">⏰ NOTIFICATIONS</p>
+                <p class="nf-field-label">⏰ ${escapeHtml(t('stNotif'))}</p>
                 <div class="nf-card">
-                    ${toggleRow('🔔 All Notifications', 'notifAll', s.notifAll)}
-                    ${toggleRow('☕ Coffee Reminders', 'notifCoffee', s.notifCoffee)}
-                    ${toggleRow('🍽️ Meal Reminders', 'notifMeal', s.notifMeal)}
-                    ${toggleRow('💡 Light Reminders', 'notifLight', s.notifLight)}
-                    ${toggleRow('😴 Sleep Reminders', 'notifSleep', s.notifSleep)}
-                    ${toggleRow('📝 End of Shift Summary', 'notifSummary', s.notifSummary)}
+                    ${toggleRow('🔔 ' + t('stTAll'), 'notifAll', s.notifAll)}
+                    ${toggleRow('☕ ' + t('stTC'), 'notifCoffee', s.notifCoffee)}
+                    ${toggleRow('🍽 ' + t('stTM'), 'notifMeal', s.notifMeal)}
+                    ${toggleRow('💡 ' + t('stTL'), 'notifLight', s.notifLight)}
+                    ${toggleRow('😴 ' + t('stTS'), 'notifSleep', s.notifSleep)}
+                    ${toggleRow('📝 ' + t('stTEos'), 'notifSummary', s.notifSummary)}
                 </div>
-                <p class="nf-field-label">🌍 TIMEZONE</p>
+                <p class="nf-field-label">🌍 ${escapeHtml(t('stTZ'))}</p>
                 <div class="nf-card">
                     <select class="nf-select" id="tz-select">
                         ${timezoneOptionsHtml(tz)}
                     </select>
                 </div>
-                <p class="nf-field-label">🔄 TRANSITION</p>
+                <p class="nf-field-label">🔄 ${escapeHtml(t('stTrans'))}</p>
                 <div class="nf-card">
-                    ${toggleRow('Transition Reminders', 'transitionReminders', s.transitionReminders)}
+                    ${toggleRow(t('stTRot'), 'transitionReminders', s.transitionReminders)}
                     <div class="nf-row" style="margin-top:8px;">
-                        <span class="nf-muted">Lead time</span>
+                        <span class="nf-muted">${escapeHtml(t('stLead'))}</span>
                         <select class="nf-select" id="lead-days">
                             ${leadDaysOptionsHtml(s.transitionLeadDays)}
                         </select>
@@ -2821,8 +2881,8 @@
                 </div>
                 ${billingBlock}
                 <div class="nf-row-btns">
-                    <button type="button" class="nf-cta" id="save-all">SAVE ALL</button>
-                    <button type="button" class="nf-cta nf-cta-secondary" id="reset-def">RESET</button>
+                    <button type="button" class="nf-cta" id="save-all">${escapeHtml(t('stSave'))}</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="reset-def">${escapeHtml(t('stReset'))}</button>
                 </div>
                 </div>
                 ${getMainTabBarHtml()}
@@ -2830,6 +2890,7 @@
 
         wireMainTabTopbar();
         bindMainTabBar();
+        wireAppLanguagePills();
         const btnStars = document.getElementById('btn-settings-stars');
         if (btnStars) btnStars.onclick = () => openProInvoice();
         const btnSchedType = document.getElementById('btn-change-schedule-type');
@@ -2879,12 +2940,12 @@
                 },
             });
             if (!row) {
-                tg.showAlert('Could not save settings');
+                tg.showAlert(t('errSaveSt'));
                 return;
             }
             state.userRow = row;
             applyUserSettingsFromUserRow(row);
-            tg.showAlert('Settings saved successfully');
+            tg.showAlert(t('msgSaved'));
             render();
         };
         document.getElementById('reset-def').onclick = () => {
@@ -2907,7 +2968,7 @@
                 state.settings.transitionLeadDays = leadEl.value;
                 const row = await patchUserMe({ transition_lead_days: leadEl.value });
                 if (!row) {
-                    tg.showAlert('Could not save setting');
+                    tg.showAlert(t('errSaveG'));
                     render();
                     return;
                 }
@@ -2933,7 +2994,7 @@
                 if (!row) {
                     state.settings[k] = prev;
                     sw.classList.toggle('on', prev);
-                    tg.showAlert('Could not save setting');
+                    tg.showAlert(t('errSaveG'));
                     return;
                 }
                 state.userRow = row;
@@ -2968,11 +3029,11 @@
 
     function openEditRotatingWindows(shift, kind, prefill) {
         if (!isRotatingServer() || !state.rotatingPattern) {
-            tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
+            tg.showAlert(t('alRotL'));
             return;
         }
         if (shift === 'day' && !patternHasDayWork()) {
-            tg.showAlert('This pattern has no day shifts.');
+            tg.showAlert(t('alPatNoDay'));
             return;
         }
         const sh = { ...rotatingShiftsObj() };
@@ -2984,31 +3045,43 @@
             : Array.isArray(sec[key])
               ? [...sec[key]]
               : [];
-        const labels = {
-            coffee: ['FIRST COFFEE', 'SECOND COFFEE'],
-            meal: ['MEAL 1', 'MEAL 2', 'MEAL 3'],
-            light: ['LIGHT 1', 'LIGHT 2'],
-        }[kind] || ['A', 'B'];
+        const labelFor = (i) => {
+            if (kind === 'coffee') {
+                if (i === 0) return t('mdlCoff1');
+                if (i === 1) return t('mdlCoff2');
+                return t('mdlCoffI', i + 1);
+            }
+            if (kind === 'meal') return t('mdlMealI', i + 1);
+            return t('mdlRemI', i);
+        };
         const n = Math.max(kind === 'meal' ? 1 : 2, arr.length);
         while (arr.length < n) {
             const def = {
                 time: '12:00',
-                message: kind === 'coffee' ? '☕ Coffee' : kind === 'meal' ? '🍽️ Meal' : '💡 Light',
+                message:
+                    kind === 'coffee'
+                        ? '☕ ' + t('stCoff')
+                        : kind === 'meal'
+                          ? '🍽 ' + t('stMeal')
+                          : '💡 ' + t('stLight'),
                 type: 'custom',
             };
             arr.push(def);
         }
-        const title =
-            (shift === 'night' ? '🌙 Night' : '☀️ Day') +
-            ' · ' +
-            (kind === 'coffee' ? 'Coffee' : kind === 'meal' ? 'Meals' : 'Light');
+        const shLabel = shift === 'night' ? t('stNt') : t('stDt');
+        const kindL = kind === 'coffee' ? t('stCoff') : kind === 'meal' ? t('stMeal') : t('stLight');
+        const title = (shift === 'night' ? '🌙 ' : '☀️ ') + shLabel + ' · ' + kindL;
         const rows = arr
             .map((w, i) => {
-                const t = w.time || '12:00';
-                const label = labels[i] || `SLOT ${i + 1}`;
-                return `<p class="nf-field-label">${label}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || '')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `rw-${i}`)}</div></div>`;
+                const tm = w.time || '12:00';
+                const lab = labelFor(i);
+                return `<p class="nf-field-label">${escapeHtml(lab)}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind(kind))}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('stTimeL'))}</span>${selectTimeHtml(
+                    '',
+                    tm,
+                    `rw-${i}`
+                )}</div></div>`;
             })
             .join('');
         openModal(`
@@ -3018,11 +3091,11 @@
                 <span></span>
             </div>
             ${rows}
-            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mrw-add">+ Add another</button>
-            <p class="nf-sub">Saves to your <strong>${shift}</strong> template. Transition days may still use a fixed plan.</p>
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mrw-add">+ ${escapeHtml(t('mdlAN'))}</button>
+            <p class="nf-sub">${escapeHtml(t('mdlMrot', shLabel))}</p>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="mrw-save">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="mrw-can">CANCEL</button>
+                <button type="button" class="nf-cta" id="mrw-save">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="mrw-can">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('mrw-close').onclick = closeModal;
         document.getElementById('mrw-can').onclick = closeModal;
@@ -3035,7 +3108,12 @@
                 }));
                 next.push({
                     time: '12:00',
-                    message: kind === 'coffee' ? '☕ Coffee' : kind === 'meal' ? '🍽️ Meal' : '💡 Light',
+                    message:
+                        kind === 'coffee'
+                            ? '☕ ' + t('stCoff')
+                            : kind === 'meal'
+                              ? '🍽 ' + t('stMeal')
+                              : '💡 ' + t('stLight'),
                     type: 'custom',
                 });
                 closeModal();
@@ -3058,7 +3136,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save');
+                    if (data && data.error) console.warn('rotating windows save', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3070,7 +3149,7 @@
                 render();
             } catch (e) {
                 console.error(e);
-                tg.showAlert('Request failed');
+                tg.showAlert(t('errNet'));
                 state.screen = 'settings';
                 render();
             }
@@ -3079,7 +3158,7 @@
 
     function openEditRotatingTemplate(which) {
         if (!isRotatingServer() || !state.rotatingPattern) {
-            tg.showAlert('No rotating pattern loaded. Open Settings again after the app syncs.');
+            tg.showAlert(t('alRotL'));
             return;
         }
         const sh = { ...rotatingShiftsObj() };
@@ -3088,23 +3167,31 @@
         const we = formatTime(sec.work_end) || (which === 'day' ? '19:00' : '07:00');
         const ss = formatTime(sec.sleep_start) || (which === 'day' ? '22:00' : '08:00');
         const se = formatTime(sec.sleep_end) || (which === 'day' ? '06:00' : '16:00');
-        const label = which === 'day' ? 'DAY' : 'NIGHT';
+        const whichLabel = which === 'day' ? t('stDt') : t('stNt');
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="m-close-rt">←</button>
-                <h1 style="font-size:1rem;">${label} template</h1>
+                <h1 style="font-size:1rem;">${escapeHtml(t('mdlRt', whichLabel))}</h1>
                 <span></span>
             </div>
-            <p class="nf-field-label">🌙 WORK</p>
-            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ws, 'rt-ws')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', we, 'rt-we')}</div>
-            <p class="nf-field-label">😴 SLEEP</p>
-            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'rt-ss')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'rt-se')}</div>
-            <p class="nf-sub">Saves to your pattern. Today’s plan refreshes on the next load.</p>
+            <p class="nf-field-label">🌙 ${escapeHtml(t('work'))}</p>
+            <div class="nf-row"><span>${escapeHtml(t('sWS'))}</span>${selectTimeHtml('', ws, 'rt-ws')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('sWE'))}</span>${selectTimeHtml(
+                '',
+                we,
+                'rt-we'
+            )}</div>
+            <p class="nf-field-label">😴 ${escapeHtml(t('sleep'))}</p>
+            <div class="nf-row"><span>${escapeHtml(t('sSS'))}</span>${selectTimeHtml('', ss, 'rt-ss')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('sSE'))}</span>${selectTimeHtml(
+                '',
+                se,
+                'rt-se'
+            )}</div>
+            <p class="nf-sub">${escapeHtml(t('mdlMws2'))}</p>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="m-savert">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="m-canrt">CANCEL</button>
+                <button type="button" class="nf-cta" id="m-savert">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="m-canrt">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('m-close-rt').onclick = closeModal;
         document.getElementById('m-canrt').onclick = closeModal;
@@ -3135,7 +3222,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save');
+                    if (data && data.error) console.warn('rotating template', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3147,7 +3235,7 @@
                 render();
             } catch (e) {
                 console.error(e);
-                tg.showAlert('Request failed');
+                tg.showAlert(t('errNet'));
                 state.screen = 'settings';
                 render();
             }
@@ -3163,19 +3251,27 @@
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="m-close">←</button>
-                <h1 style="font-size:1rem;">Work & Sleep</h1>
+                <h1 style="font-size:1rem;">${escapeHtml(t('mdlTws'))}</h1>
                 <span></span>
             </div>
-            <p class="nf-field-label">🌙 WORK</p>
-            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ws, 'mw-s')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', we, 'mw-e')}</div>
-            <p class="nf-field-label">😴 SLEEP</p>
-            <div class="nf-row"><span>Start</span>${selectTimeHtml('', ss, 'ms-s')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>End</span>${selectTimeHtml('', se, 'ms-e')}</div>
-            <p class="nf-sub">Work &amp; sleep only. Edit coffee, meal, and light in the sections above. To switch permanent/rotating, use <strong>Change schedule type</strong> in Settings.</p>
+            <p class="nf-field-label">🌙 ${escapeHtml(t('work'))}</p>
+            <div class="nf-row"><span>${escapeHtml(t('sWS'))}</span>${selectTimeHtml('', ws, 'mw-s')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('sWE'))}</span>${selectTimeHtml(
+                '',
+                we,
+                'mw-e'
+            )}</div>
+            <p class="nf-field-label">😴 ${escapeHtml(t('sleep'))}</p>
+            <div class="nf-row"><span>${escapeHtml(t('sSS'))}</span>${selectTimeHtml('', ss, 'ms-s')}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('sSE'))}</span>${selectTimeHtml(
+                '',
+                se,
+                'ms-e'
+            )}</div>
+            <p class="nf-sub">${escapeHtml(t('mdlMws'))}</p>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="m-save">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="m-can">CANCEL</button>
+                <button type="button" class="nf-cta" id="m-save">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="m-can">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('m-close').onclick = closeModal;
         document.getElementById('m-can').onclick = closeModal;
@@ -3204,7 +3300,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save schedule');
+                    if (data && data.error) console.warn('constant work/sleep', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3216,7 +3313,7 @@
                 state.stack = ['dashboard'];
                 render();
             } catch (e) {
-                tg.showAlert('Could not save schedule');
+                tg.showAlert(t('errSaveSt'));
                 state.screen = 'settings';
                 render();
             }
@@ -3230,30 +3327,32 @@
         while (cw.length < n) {
             cw.push({
                 time: '22:00',
-                message: '☕ Coffee',
+                message: '☕ ' + t('stCoff'),
                 type: cw.length ? 'mid_shift' : 'pre_work',
             });
         }
+        const coffLab = (i) => (i === 0 ? t('mdlCoff1') : i === 1 ? t('mdlCoff2') : t('mdlCoffI', i + 1));
         const rows = cw
             .map((w, i) => {
-                const t = w.time || '22:00';
-                const label = i === 0 ? 'FIRST COFFEE' : i === 1 ? 'SECOND COFFEE' : `COFFEE ${i + 1}`;
-                return `<p class="nf-field-label">${label}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Coffee')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `c-${i}`)}</div></div>`;
+                const tm = w.time || '22:00';
+                return `<p class="nf-field-label">${escapeHtml(coffLab(i))}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('coffee'))}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
+                t('stTimeL')
+            )}</span>${selectTimeHtml('', tm, `c-${i}`)}</div></div>`;
             })
             .join('');
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="mc-close">←</button>
-                <h1 style="font-size:1rem;">Coffee</h1>
+                <h1 style="font-size:1rem;">${escapeHtml(t('stCoff'))}</h1>
                 <span></span>
             </div>
             ${rows}
-            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mc-add">+ Add another</button>
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mc-add">+ ${escapeHtml(t('mdlAN'))}</button>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="mc-save">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="mc-can">CANCEL</button>
+                <button type="button" class="nf-cta" id="mc-save">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="mc-can">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('mc-close').onclick = closeModal;
         document.getElementById('mc-can').onclick = closeModal;
@@ -3264,7 +3363,7 @@
                     ...w,
                     time: (document.getElementById(`c-${i}`) || {}).value || w.time || '22:00',
                 }));
-                next.push({ time: '12:00', message: '☕ Coffee', type: 'mid_shift' });
+                next.push({ time: '12:00', message: '☕ ' + t('stCoff'), type: 'mid_shift' });
                 closeModal();
                 openEditCoffee(next);
             };
@@ -3281,7 +3380,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save coffee times');
+                    if (data && data.error) console.warn('constant coffee', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3290,7 +3390,7 @@
                 closeModal();
                 render();
             } catch (e) {
-                tg.showAlert('Could not save coffee times');
+                tg.showAlert(t('errSaveSt'));
             }
         };
     }
@@ -3300,27 +3400,29 @@
         let mw = Array.isArray(prefill) ? [...prefill] : [...(sched.meal_windows || [])];
         const n = Math.max(1, mw.length);
         while (mw.length < n) {
-            mw.push({ time: '12:00', message: '🍽️ Meal', type: 'mid_shift' });
+            mw.push({ time: '12:00', message: '🍽 ' + t('stMeal'), type: 'mid_shift' });
         }
         const rows = mw
             .map((w, i) => {
-                const t = w.time || '12:00';
-                return `<p class="nf-field-label">MEAL ${i + 1}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Meal')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `m-${i}`)}</div></div>`;
+                const tm = w.time || '12:00';
+                return `<p class="nf-field-label">${escapeHtml(t('mdlMealI', i + 1))}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('meal'))}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
+                t('stTimeL')
+            )}</span>${selectTimeHtml('', tm, `m-${i}`)}</div></div>`;
             })
             .join('');
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="mm-close">←</button>
-                <h1 style="font-size:1rem;">Meals</h1>
+                <h1 style="font-size:1rem;">${escapeHtml(t('stMeal'))}</h1>
                 <span></span>
             </div>
             ${rows}
-            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mm-add">+ Add another</button>
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="mm-add">+ ${escapeHtml(t('mdlAN'))}</button>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="mm-save">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="mm-can">CANCEL</button>
+                <button type="button" class="nf-cta" id="mm-save">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="mm-can">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('mm-close').onclick = closeModal;
         document.getElementById('mm-can').onclick = closeModal;
@@ -3331,7 +3433,7 @@
                     ...w,
                     time: (document.getElementById(`m-${i}`) || {}).value || w.time || '12:00',
                 }));
-                next.push({ time: '12:00', message: '🍽️ Meal', type: 'mid_shift' });
+                next.push({ time: '12:00', message: '🍽 ' + t('stMeal'), type: 'mid_shift' });
                 closeModal();
                 openEditMeals(next);
             };
@@ -3348,7 +3450,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save meal times');
+                    if (data && data.error) console.warn('constant meal', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3357,7 +3460,7 @@
                 closeModal();
                 render();
             } catch (e) {
-                tg.showAlert('Could not save meal times');
+                tg.showAlert(t('errSaveSt'));
             }
         };
     }
@@ -3369,30 +3472,32 @@
         while (bw.length < n) {
             bw.push({
                 time: '21:00',
-                message: '💡 Light reminder',
+                message: '💡 ' + t('stLight'),
                 type: 'dim',
                 action: 'dim_lights',
             });
         }
         const rows = bw
             .map((w, i) => {
-                const t = w.time || '21:00';
-                return `<p class="nf-field-label">REMINDER ${i + 1}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || 'Light')}</div>
-            <div class="nf-row" style="margin-top:8px;"><span>Time</span>${selectTimeHtml('', t, `l-${i}`)}</div></div>`;
+                const tm = w.time || '21:00';
+                return `<p class="nf-field-label">${escapeHtml(t('mdlRemI', i))}</p>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('light'))}</div>
+            <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
+                t('stTimeL')
+            )}</span>${selectTimeHtml('', tm, `l-${i}`)}</div></div>`;
             })
             .join('');
         openModal(`
             <div class="nf-topbar" style="margin-bottom:12px;">
                 <button type="button" class="nf-back" id="ml-close">←</button>
-                <h1 style="font-size:1rem;">Light reminders</h1>
+                <h1 style="font-size:1rem;">${escapeHtml(t('mdlLig'))}</h1>
                 <span></span>
             </div>
             ${rows}
-            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="ml-add">+ Add another</button>
+            <button type="button" class="nf-cta-secondary nf-btn-add-slot" id="ml-add">+ ${escapeHtml(t('mdlAN'))}</button>
             <div class="nf-row-btns">
-                <button type="button" class="nf-cta" id="ml-save">SAVE</button>
-                <button type="button" class="nf-cta nf-cta-secondary" id="ml-can">CANCEL</button>
+                <button type="button" class="nf-cta" id="ml-save">${escapeHtml(t('stSave'))}</button>
+                <button type="button" class="nf-cta nf-cta-secondary" id="ml-can">${escapeHtml(t('mdlCan'))}</button>
             </div>`);
         document.getElementById('ml-close').onclick = closeModal;
         document.getElementById('ml-can').onclick = closeModal;
@@ -3405,7 +3510,7 @@
                 }));
                 next.push({
                     time: '22:00',
-                    message: '💡 Light reminder',
+                    message: '💡 ' + t('stLight'),
                     type: 'dim',
                     action: 'dim_lights',
                 });
@@ -3425,7 +3530,8 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    tg.showAlert(data.error || 'Could not save light reminders');
+                    if (data && data.error) console.warn('constant light', data.error);
+                    tg.showAlert(t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3434,7 +3540,7 @@
                 closeModal();
                 render();
             } catch (e) {
-                tg.showAlert('Could not save light reminders');
+                tg.showAlert(t('errSaveSt'));
             }
         };
     }
@@ -3474,75 +3580,76 @@
 
     function openDetailedLog(localDateStr, coffees, meals) {
         const latOpts = [
-            { v: 'lt15', l: '< 15 min' },
-            { v: '15-30', l: '15-30 min' },
-            { v: '30-60', l: '30-60 min' },
-            { v: 'gt60', l: '> 60 min' },
+            { v: 'lt15', l: t('dlLa0') },
+            { v: '15-30', l: t('dlLa1') },
+            { v: '30-60', l: t('dlLa2') },
+            { v: 'gt60', l: t('dlLa3') },
         ];
         const roomOpts = [
-            { v: 'dark', l: 'Dark' },
-            { v: 'dim', l: 'Dim' },
-            { v: 'light', l: 'Light' },
+            { v: 'dark', l: t('dlRo0') },
+            { v: 'dim', l: t('dlRo1') },
+            { v: 'light', l: t('dlRo2') },
         ];
         const tempOpts = [
-            { v: 'cool', l: 'Cool' },
-            { v: 'comfortable', l: 'Comfortable' },
-            { v: 'warm', l: 'Warm' },
+            { v: 'cool', l: t('dlTe0') },
+            { v: 'comfortable', l: t('dlTe1') },
+            { v: 'warm', l: t('dlTe2') },
+        ];
+        const ynN = () => [
+            { v: '0', l: t('no') },
+            { v: '1', l: t('yes') },
+        ];
+        const ynY = () => [
+            { v: '1', l: t('yes') },
+            { v: '0', l: t('no') },
         ];
 
         const html = `
 <div class="nf-detailed-inner">
     <div class="nf-dl-header">
-        <button type="button" class="nf-back" id="dl-close" aria-label="Close">←</button>
+        <button type="button" class="nf-back" id="dl-close" aria-label="${escapeHtml(t('mdlCan'))}">←</button>
         <div>
-            <h2 class="nf-dl-title">Detailed log</h2>
-            <p class="nf-dl-sub">Optional · deeper check-in</p>
+            <h2 class="nf-dl-title">${escapeHtml(t('dlT'))}</h2>
+            <p class="nf-dl-sub">${escapeHtml(t('dlS'))}</p>
         </div>
     </div>
     <div class="nf-dl-scroll">
         <section class="nf-dl-card">
-            <h3 class="nf-dl-section-title">SLEEP</h3>
+            <h3 class="nf-dl-section-title">${escapeHtml(t('dlSleep'))}</h3>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Actual bed time</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlBed'))}</span>
                 <div class="nf-dl-row">${selectTimeHtml('', '22:00', 'dl-bed')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Actual wake time</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlWake'))}</span>
                 <div class="nf-dl-row">${selectTimeHtml('', '08:00', 'dl-wake')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Time to fall asleep</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlFall'))}</span>
                 <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-slat', latOpts, 'lt15')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Woke up during the night?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-night',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlNight'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-night', ynN(), '0')}</div>
                 <div class="nf-dl-subfield" id="dl-night-count-wrap" style="display:none;">
-                    <span class="nf-dl-label">Times woken</span>
+                    <span class="nf-dl-label">${escapeHtml(t('dlNW'))}</span>
                     <input type="number" class="nf-dl-num" id="dl-night-count" min="1" max="20" value="1" />
                 </div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Room darkness</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlRoom'))}</span>
                 <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-room', roomOpts, 'dark')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Temperature</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlTemp'))}</span>
                 <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-temp', tempOpts, 'comfortable')}</div>
             </div>
         </section>
         <section class="nf-dl-card">
-            <h3 class="nf-dl-section-title">CAFFEINE</h3>
+            <h3 class="nf-dl-section-title">${escapeHtml(t('dlCaf'))}</h3>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Total cups today</span>
-                <select class="nf-select" id="dl-cups" aria-label="Cups of caffeine">
+                <span class="nf-dl-label">${escapeHtml(t('dlCups'))}</span>
+                <select class="nf-select" id="dl-cups" aria-label="${escapeHtml(t('dlCups'))}">
                     <option value="0">0</option>
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -3551,127 +3658,73 @@
                 </select>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Last coffee / caffeine time</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlLastC'))}</span>
                 <div class="nf-dl-row">${selectTimeHtml('', '14:00', 'dl-lastcaf')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Caffeine after 6pm?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-caf6',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlC6'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-caf6', ynN(), '0')}</div>
             </div>
         </section>
         <section class="nf-dl-card">
-            <h3 class="nf-dl-section-title">LIGHT & SCREENS</h3>
+            <h3 class="nf-dl-section-title">${escapeHtml(t('dlLS'))}</h3>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Phone or tablet before bed?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-scr',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlScr'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-scr', ynN(), '0')}</div>
                 <div class="nf-dl-subfield" id="dl-screens-wrap" style="display:none;">
-                    <span class="nf-dl-label">Minutes of screen time</span>
+                    <span class="nf-dl-label">${escapeHtml(t('dlScrM'))}</span>
                     <input type="number" class="nf-dl-num" id="dl-screens-min" min="0" max="600" value="15" />
                 </div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Bright light within 30 min of waking?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-bright',
-                    [
-                        { v: '1', l: 'Yes' },
-                        { v: '0', l: 'No' },
-                    ],
-                    '1'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlBright'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-bright', ynY(), '1')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Dimmed lights ~2h before sleep?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-dim',
-                    [
-                        { v: '1', l: 'Yes' },
-                        { v: '0', l: 'No' },
-                    ],
-                    '1'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlDim'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-dim', ynY(), '1')}</div>
             </div>
         </section>
         <section class="nf-dl-card">
-            <h3 class="nf-dl-section-title">MEALS</h3>
+            <h3 class="nf-dl-section-title">${escapeHtml(t('dlMeal'))}</h3>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Time of last meal before sleep</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlLastM'))}</span>
                 <div class="nf-dl-row">${selectTimeHtml('', '20:00', 'dl-lastmeal')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Ate within 2h of bedtime?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-ate',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlAte'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-ate', ynN(), '0')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Hungry during sleep?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-hungry',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlHung'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-hungry', ynN(), '0')}</div>
             </div>
         </section>
         <section class="nf-dl-card">
-            <h3 class="nf-dl-section-title">WORK & ENERGY</h3>
+            <h3 class="nf-dl-section-title">${escapeHtml(t('dlWE'))}</h3>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Most tired during shift at</span>
+                <span class="nf-dl-label">${escapeHtml(t('dlTired'))}</span>
                 <div class="nf-dl-row">${selectTimeHtml('', '03:00', 'dl-tired')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Took breaks?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-breaks',
-                    [
-                        { v: '1', l: 'Yes' },
-                        { v: '0', l: 'No' },
-                    ],
-                    '1'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlBreak'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-breaks', ynY(), '1')}</div>
             </div>
             <div class="nf-dl-field">
-                <span class="nf-dl-label">Unusual stress?</span>
-                <div class="nf-dl-choice-wrap">${dlRadioGroup(
-                    'dl-stress',
-                    [
-                        { v: '0', l: 'No' },
-                        { v: '1', l: 'Yes' },
-                    ],
-                    '0'
-                )}</div>
+                <span class="nf-dl-label">${escapeHtml(t('dlStress'))}</span>
+                <div class="nf-dl-choice-wrap">${dlRadioGroup('dl-stress', ynN(), '0')}</div>
                 <div class="nf-dl-subfield" id="dl-stress-wrap" style="display:none;">
-                    <span class="nf-dl-label">Note (optional)</span>
-                    <textarea class="nf-dl-note" id="dl-stress-note" maxlength="2000" placeholder="A few words..."></textarea>
+                    <span class="nf-dl-label">${escapeHtml(t('dlStN'))}</span>
+                    <textarea class="nf-dl-note" id="dl-stress-note" maxlength="2000" placeholder="${escapeHtml(
+                        t('dlStP')
+                    )}"></textarea>
                 </div>
             </div>
         </section>
     </div>
     <div class="nf-dl-footer">
-        <button type="button" class="nf-cta" id="dl-save">SAVE DETAILS</button>
-        <button type="button" class="nf-cta nf-cta-secondary" id="dl-skip">SKIP</button>
+        <button type="button" class="nf-cta" id="dl-save">${escapeHtml(t('dlSD'))}</button>
+        <button type="button" class="nf-cta nf-cta-secondary" id="dl-skip">${escapeHtml(t('dlSk'))}</button>
     </div>
 </div>`;
 
@@ -3742,12 +3795,12 @@
                 if (!r1.ok) throw new Error('sum');
                 const r2 = await api('/summaries/detailed', { method: 'POST', json: payload });
                 if (!r2.ok) throw new Error('det');
-                tg.showAlert('Detailed log saved.');
+                tg.showAlert(t('alDL'));
                 closeModal();
                 back();
             } catch (e) {
                 console.error(e);
-                tg.showAlert('Could not save. Try again.');
+                tg.showAlert(t('alDLE'));
             }
         };
     }
@@ -4009,8 +4062,7 @@
 
     async function boot() {
         if (!user) {
-            $root.innerHTML =
-                '<div class="nf-error">Could not read Telegram user. Open this app from Telegram.</div>';
+            $root.innerHTML = `<div class="nf-error">${escapeHtml(t('errBoot'))}</div>`;
             return;
         }
         renderLoading();

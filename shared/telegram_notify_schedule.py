@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Set, Tuple
 from shared.db import supabase_client
 from shared.schedule_utils import safe_json_parse, str_to_time
+from shared.miniapp_i18n import norm_lang
 from shared.rotating_engine import build_rotating_day_from_pattern_row
 from shared.time_utils import get_user_now_from_timezone_name, combine_local_date_and_time
 
@@ -92,12 +93,14 @@ def fetch_effective_schedule_today(user_id: str, today_str: str) -> Tuple[str, O
     """
     urow = (
         supabase_client.table("users")
-        .select("shift_type")
+        .select("shift_type, ui_language")
         .eq("id", user_id)
         .limit(1)
         .execute()
     )
-    shift_t = (urow.data[0] or {}).get("shift_type") if urow.data else None
+    u0 = urow.data[0] if urow.data else {}
+    shift_t = u0.get("shift_type")
+    tlang = norm_lang(u0.get("ui_language"))
     try:
         local = date.fromisoformat(today_str[:10])
     except (ValueError, TypeError):
@@ -126,7 +129,7 @@ def fetch_effective_schedule_today(user_id: str, today_str: str) -> Tuple[str, O
             .execute()
         )
         if rpat and rpat.data:
-            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local)
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local, lang=tlang)
             if comp is not None:
                 return "ok", comp
         return "no_constant", None

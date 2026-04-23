@@ -35,6 +35,7 @@ from shared.db import (
     set_user_ui_language,
 )
 from shared.bot_i18n import PICK_LANGUAGE, INTRO, welcome_back, msg_language_saved, LANG_TITLE
+from shared.bot_menu import command_menu_markup, webapp_url
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
     MAX_PRO_REFUNDS_PER_UTC_MONTH,
@@ -98,11 +99,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     code = (db_user or {}).get("ui_language")
     if not code:
-        await update.message.reply_text(PICK_LANGUAGE, reply_markup=_lang_keyboard())
+        await update.message.reply_text(
+            PICK_LANGUAGE, reply_markup=_lang_keyboard()
+        )
         return
 
     await update.message.reply_text(
-        welcome_back(user.first_name or "there", code)
+        welcome_back(user.first_name or "there", code),
+        reply_markup=command_menu_markup(),
     )
 
 
@@ -132,54 +136,42 @@ async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     text = msg_language_saved(lang) if had_lang else INTRO.get(lang, INTRO["en"])
     parse = "HTML" if not had_lang else None
     try:
-        await q.edit_message_text(text=text, parse_mode=parse, reply_markup=None)
+        await q.edit_message_text(
+            text=text,
+            parse_mode=parse,
+            reply_markup=command_menu_markup(),
+        )
     except Exception as e:
         logger.warning("edit_message after lang pick: %s", e)
         try:
             await context.bot.send_message(
-                chat_id=tid, text=text, parse_mode=parse
+                chat_id=tid,
+                text=text,
+                parse_mode=parse,
+                reply_markup=command_menu_markup(),
             )
         except Exception as e2:
             logger.error("send_message after lang: %s", e2)
 
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Pause notifications."""
-    user_id = update.effective_user.id
-    supabase_client.table("users").update({"notification_enabled": False}).eq("telegram_id", user_id).execute()
-    await update.message.reply_text("Notifications paused. Use /resume to enable again.")
 
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Resume notifications."""
-    user_id = update.effective_user.id
-    supabase_client.table("users").update({"notification_enabled": True}).eq("telegram_id", user_id).execute()
-    await update.message.reply_text("Notifications resumed.")
-
-
-class RefundedPaymentFilter(filters.BaseFilter):
-    def check_update(self, update: Update):
-        m = update.message
-        return bool(m and getattr(m, "refunded_payment", None))
-
-
-async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Recurring Nightflow Pro via ``createInvoiceLink`` + open URL (Bot API: subscription invoices are not for ``sendInvoice``)."""
+async def deliver_subscribe(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
+    """Stars subscription link (same as /subscribe)."""
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        await update.message.reply_text("Billing is not configured (TELEGRAM_TOKEN).")
+        await context.bot.send_message(chat_id, "Billing not configured.")
         return
-    tid = update.effective_user.id
-    row = get_user_by_telegram_id(tid) or {}
+    row = get_user_by_telegram_id(user_id) or {}
     if paid_pro_period_active(row):
         pe = _parse_dt(row.get("pro_expires_at"))
-        until = pe.strftime("%B %d, %Y %H:%M UTC") if pe else "your current period end"
-        await update.message.reply_text(
-            f"You already have an active Pro subscription until {until}. No need to subscribe again."
+        until = pe.strftime("%B %d, %Y %H:%M UTC") if pe else "period end"
+        await context.bot.send_message(
+            chat_id,
+            f"Pro active until {until}. No new sub needed.",
         )
         return
-    # TESTING ONLY: price is PRO_PRICE_STARS (1 Star); production was 50.
     desc = (
-        "Full schedule, weekly report, suggestions, settings editing, "
-        f"check-ins, and all reminders. {PRO_PRICE_STARS} Stars every 30 days (renews until you cancel)."
+        "Full schedule, week, ideas, settings, reminders. "
+        f"{PRO_PRICE_STARS} Stars / 30 days (renews until cancel)."
     )
     prices = [{"label": "1 month", "amount": int(PRO_PRICE_STARS)}]
     link = create_invoice_link(
@@ -194,18 +186,72 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         onetime_if_recurring_fails=False,
     )
     if not link:
-        await update.message.reply_text(
-            "Could not create a recurring Stars payment link. "
-            "In BotFather, enable Stars + payments for this bot, then try again — "
-            "or subscribe from the mini-app (Settings)."
+        await context.bot.send_message(
+            chat_id,
+            "Could not create payment link. BotFather: Stars + payments, then retry.",
         )
         return
-    await update.message.reply_text(
-        "Nightflow Pro renews every 30 days in Telegram (Stars). "
-        "Tap the button, complete payment, and your Pro time will be applied here.",
+    await context.bot.send_message(
+        chat_id,
+        "Pro = 30 days in Telegram (Stars). Tap Pay ↓",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Pay — Nightflow Pro (30-day subscription)", url=link)]]
+            [[InlineKeyboardButton("Pay — Nightflow Pro", url=link)]]
         ),
+    )
+
+
+async def deliver_pause(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
+    supabase_client.table("users").update({"notification_enabled": False}).eq(
+        "telegram_id", user_id
+    ).execute()
+    await context.bot.send_message(chat_id, "Paused. /resume")
+
+
+async def deliver_resume(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
+    supabase_client.table("users").update({"notification_enabled": True}).eq(
+        "telegram_id", user_id
+    ).execute()
+    await context.bot.send_message(chat_id, "Resumed.")
+
+
+async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not q or not str(q.data).startswith("menu:"):
+        return
+    act = str(q.data).split(":", 1)[1]
+    chat_id = q.message.chat_id
+    uid = q.from_user.id
+    await q.answer()
+    if act == "sub":
+        await deliver_subscribe(context, chat_id, uid)
+    elif act == "pause":
+        await deliver_pause(context, chat_id, uid)
+    elif act == "resume":
+        await deliver_resume(context, chat_id, uid)
+    elif act == "lang":
+        await context.bot.send_message(
+            chat_id, LANG_TITLE, reply_markup=_lang_keyboard()
+        )
+
+
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await deliver_pause(context, update.effective_chat.id, update.effective_user.id)
+
+
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await deliver_resume(context, update.effective_chat.id, update.effective_user.id)
+
+
+class RefundedPaymentFilter(filters.BaseFilter):
+    def check_update(self, update: Update):
+        m = update.message
+        return bool(m and getattr(m, "refunded_payment", None))
+
+
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recurring Nightflow Pro (same as ⭐ Pro button)."""
+    await deliver_subscribe(
+        context, update.effective_chat.id, update.effective_user.id
     )
 
 
@@ -614,11 +660,9 @@ async def post_init(application: Application):
         logger.info("✅ Webhook deleted - forcing polling mode")
         
         # Then set menu button (this doesn't affect polling)
+        wu = webapp_url()
         await application.bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(
-                text="🌙 Nightflow",
-                web_app=WebAppInfo(url="https://nightflow-bot-production.up.railway.app")
-            )
+            menu_button=MenuButtonWebApp(text="🌙 Nightflow", web_app=WebAppInfo(url=wu))
         )
         logger.info("✅ Menu button set successfully")
     except Exception as e:
@@ -636,7 +680,10 @@ def main():
     
     # Add handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("lang", cmd_lang))
+    application.add_handler(
+        CommandHandler(["lang", "language", "setlang"], cmd_lang)
+    )
+    application.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
     application.add_handler(CommandHandler("pause", pause))
     application.add_handler(CommandHandler("resume", resume))

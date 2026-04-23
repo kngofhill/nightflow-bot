@@ -10,6 +10,7 @@ import json
 from datetime import date, time
 from typing import Any, Dict, List, Optional, Tuple
 
+from shared.miniapp_i18n import mt, norm_lang
 from shared.schedule_utils import (
     calculate_optimal_schedule,
     rest_day_habit_windows,
@@ -100,9 +101,10 @@ def _min_of_day(t: time) -> int:
     return t.hour * 60 + t.minute
 
 
-def _wellness_suggestions_for_day(row: Dict[str, Any]) -> List[str]:
+def _wellness_suggestions_for_day(row: Dict[str, Any], lang: str = "en") -> List[str]:
     """Non-blocking hints when user custom times look risky (normal days only)."""
     out: List[str] = []
+    lang = norm_lang(lang)
     slp = str_to_time(_t(row.get("sleep_start") or "", "22:00"))
     if not slp:
         return out
@@ -115,7 +117,7 @@ def _wellness_suggestions_for_day(row: Dict[str, Any]) -> List[str]:
         # crude "within 5h before bed" on same 24h line
         d = (slpm - cm) % 1440
         if 0 < d <= 5 * 60:
-            out.append("Coffee very close to bedtime can fragment sleep — consider an earlier last cup on rest days.")
+            out.append(mt("well_coffee", lang))
             break
     for w in row.get("meal_windows") or []:
         t = str_to_time(str((w or {}).get("time", "20:00"))[:8])
@@ -124,7 +126,7 @@ def _wellness_suggestions_for_day(row: Dict[str, Any]) -> List[str]:
         mm = _min_of_day(t)
         d2 = (slpm - mm) % 1440
         if 0 < d2 <= 3 * 60:
-            out.append("Heavy eating right before bed can feel uncomfortable — a lighter last meal may help on regular days.")
+            out.append(mt("well_meal", lang))
             break
     for w in row.get("brightness_windows") or []:
         t = str_to_time(str((w or {}).get("time", "21:00"))[:8])
@@ -133,7 +135,7 @@ def _wellness_suggestions_for_day(row: Dict[str, Any]) -> List[str]:
         bm = _min_of_day(t)
         d3 = (slpm - bm) % 1440
         if 0 < d3 <= 2 * 60:
-            out.append("Very bright light minutes before you lie down can delay melatonin — this is a gentle heads-up, not a rule change.")
+            out.append(mt("well_bright", lang))
             break
     return out
 
@@ -148,7 +150,9 @@ def _work_day(
     advice: Optional[str],
     template: Optional[Dict[str, Any]] = None,
     is_transition: bool = False,
+    lang: str = "en",
 ) -> Dict[str, Any]:
+    lang = norm_lang(lang)
     ws, we = _to_time(wsa), _to_time(web)
     if not ws or not we:
         return _off_style(d, "08:00", "16:00", advice, [], [], [])
@@ -160,7 +164,7 @@ def _work_day(
         s_s = str_to_time(_t(sso, "22:00"))
     if s_e is None and seo:
         s_e = str_to_time(_t(seo, "06:00"))
-    opt = calculate_optimal_schedule(ws, we, s_s, s_e)
+    opt = calculate_optimal_schedule(ws, we, s_s, s_e, lang=lang)
     st = opt.get("shift_type", "night" if slot == "night" else "day")
     for k in ("coffee_windows", "meal_windows", "brightness_windows"):
         v = opt.get(k)
@@ -192,7 +196,8 @@ def _work_day(
                 "coffee_windows": coffee,
                 "meal_windows": meal,
                 "brightness_windows": bright,
-            }
+            },
+            lang=lang,
         )
 
     row = {
@@ -210,7 +215,7 @@ def _work_day(
         "is_transition_day": is_transition,
     }
     if is_transition:
-        row["reminders_locked"] = "Transition day: coffee / meal / light use the system plan so sleep timing stays consistent."
+        row["reminders_locked"] = mt("reminders_locked", lang)
     if wellness:
         row["wellness_suggestions"] = wellness
     return row
@@ -249,7 +254,9 @@ def build_rotating_day(
     block_nights: int = 14,
     block_days: int = 14,
     block_off: int = 0,
+    lang: str = "en",
 ) -> Dict[str, Any]:
+    lang = norm_lang(lang)
     n = night or {}
     d_pl = day or {}
     wn = (_t(n.get("work_start", "19:00"), "19:00"), _t(n.get("work_end", "07:00"), "07:00"))
@@ -275,13 +282,13 @@ def build_rotating_day(
         )
         if pattern_id == "pitman_2_2_3" and index == 6:
             sso, seo = "08:00", "12:00"
-            adv = "Night → day: short 4h sleep (08:00–12:00), then stay awake until ~22:00 before day block."
+            adv = mt("rot_pit_night_to_day", lang)
         if pattern_id == "block_rotation" and m_b > 0 and n_b > 0 and index == n_b - 1:
             sso, seo = "08:00", "12:00"
             adv = (adv or "")
-            adv = adv + " End of night block: short 4h sleep, then stay awake until first day-sleep (≈22:00)."
+            adv = adv + " " + mt("rot_block_end_night", lang)
         base = _work_day(
-            d, "night", wn[0], wn[1], sso, seo, adv.strip() if adv else None, template=n, is_transition=n_tr
+            d, "night", wn[0], wn[1], sso, seo, adv.strip() if adv else None, template=n, is_transition=n_tr, lang=lang
         )
         base.update(out_meta)
         return base
@@ -291,7 +298,7 @@ def build_rotating_day(
         sso, seo = d_ss, d_se
         d_tr = (pattern_id == "pitman_2_2_3" and index == 13)
         if pattern_id == "pitman_2_2_3" and index == 13:
-            adv2 = "Day → night: take a 4h nap 14:00–18:00 before the first night of the new cycle."
+            adv2 = mt("rot_pit_day_to_night", lang)
         n_b, m_b, o_b = int(block_nights), int(block_days), int(block_off)
         if (
             pattern_id == "block_rotation"
@@ -303,17 +310,17 @@ def build_rotating_day(
             d_tr = True
             sso, seo = "14:00", "18:00"
             adv2 = (adv2 or "")
-            adv2 = adv2 + " End of day block: 4h nap 14:00–18:00, then first night of night block."
+            adv2 = adv2 + " " + mt("rot_block_end_day", lang)
 
         base = _work_day(
-            d, "day", wd[0], wd[1], sso, seo, adv2.strip() if adv2 else None, template=d_pl, is_transition=d_tr
+            d, "day", wd[0], wd[1], sso, seo, adv2.strip() if adv2 else None, template=d_pl, is_transition=d_tr, lang=lang
         )
         base.update(out_meta)
         return base
 
     if slot == "off":
         sl, se = "08:00", "16:00"
-        adv3: Optional[str] = "Off day — sleep aligned with upcoming work block."
+        adv3: Optional[str] = mt("rot_off_default", lang)
 
         if pattern_id == "pitman_2_2_3":
             nxt = _next_work(PITMAN_2_2_3, index)
@@ -324,38 +331,38 @@ def build_rotating_day(
         if pattern_id == "pat_4n4o4d4o":
             if 4 <= index <= 7:
                 sl, se = "22:00", "06:00"
-                adv3 = "Off before day run — use day sleep (22:00–06:00)."
+                adv3 = mt("rot_pat4_off_before_day", lang)
             if 12 <= index <= 15:
                 sl, se = "08:00", "16:00"
-                adv3 = "Off before night run — use night sleep (08:00–16:00)."
+                adv3 = mt("rot_pat4_off_before_night", lang)
             if index == 15:
                 sl, se = "14:00", "18:00"
-                adv3 = "Last off day before night: 4h nap, then first night."
+                adv3 = mt("rot_pat4_last_off", lang)
         if pattern_id == "pat_4n4o":
             sl, se = "08:00", "16:00"
-            adv3 = "Off — stay in night mode (08:00–16:00)."
+            adv3 = mt("rot_pat4n4o_off", lang)
             extra_b: List[Dict] = []
             if index == 7:
                 sl, se = "14:00", "18:00"
-                adv3 = "Last off day: 4h nap 14:00–18:00, bright light ~20:00, then first night block."
+                adv3 = mt("rot_pat4n4o_last", lang)
                 extra_b = [
                     {
                         "time": "20:00",
-                        "message": "Bright light 20:00 to boost alertness before the night block.",
+                        "message": mt("rot_bright_20", lang),
                         "type": "alert",
                     }
                 ]
             else:
                 extra_b = []
-            hab = rest_day_habit_windows(sl, se)
+            hab = rest_day_habit_windows(sl, se, lang=lang)
             bright_merged = list(hab["brightness_windows"]) + extra_b
             b = _off_style(d, sl, se, adv3, hab["coffee_windows"], hab["meal_windows"], bright_merged)
             b.update(out_meta)
             return b
         if pattern_id == "block_rotation":
             sl, se = "08:00", "16:00"
-            adv3 = "Off day — use night rest sleep; next work block is nights."
-        hab = rest_day_habit_windows(sl, se)
+            adv3 = mt("rot_block_off", lang)
+        hab = rest_day_habit_windows(sl, se, lang=lang)
         b = _off_style(
             d,
             sl,
@@ -368,7 +375,7 @@ def build_rotating_day(
         b.update(out_meta)
         return b
 
-    hab0 = rest_day_habit_windows("22:00", "06:00")
+    hab0 = rest_day_habit_windows("22:00", "06:00", lang=lang)
     b = _off_style(d, "22:00", "06:00", None, hab0["coffee_windows"], hab0["meal_windows"], hab0["brightness_windows"])
     b.update(out_meta)
     return b
@@ -438,7 +445,7 @@ def _parse_pattern_start_date(row: Dict[str, Any], sh: Dict[str, Any]) -> date:
 
 
 def build_rotating_day_from_pattern_row(
-    row: Dict[str, Any], local_day: date
+    row: Dict[str, Any], local_day: date, lang: str = "en"
 ) -> Optional[Dict[str, Any]]:
     if not row:
         return None
@@ -475,4 +482,5 @@ def build_rotating_day_from_pattern_row(
         block_nights=bn,
         block_days=bd,
         block_off=bo,
+        lang=norm_lang(lang),
     )

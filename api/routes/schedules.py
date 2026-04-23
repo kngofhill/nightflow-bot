@@ -16,12 +16,17 @@ from shared.schedule_utils import (
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
 from shared.insights import get_habits_effective_from_date, week_query_start, build_bad_habit_suggestion_items
+from shared.miniapp_i18n import mt, norm_lang
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
 from typing import List, Optional, Tuple
 
 bp = Blueprint("schedules", __name__, url_prefix="/api/v1/schedules")
+
+
+def _app_lang_from_row(urow) -> str:
+    return norm_lang((urow or {}).get("ui_language"))
 
 
 def _user_timezone(user_id: str) -> str:
@@ -458,11 +463,13 @@ def create_constant():
         return jsonify({"error": "Provide both sleep_start and sleep_end, or neither"}), 400
 
     timezone = _user_timezone(user_id)
+    alang = _app_lang_from_row(urow)
     optimized = calculate_optimal_schedule(
         work_start,
         work_end,
         opt_sleep_start,
         opt_sleep_end,
+        lang=alang,
     )
 
     today = str(get_user_now_from_timezone_name(timezone).date())
@@ -542,6 +549,7 @@ def schedule_preview():
     urow = fetch_user_row_by_id(user_id)
     if not urow:
         return jsonify({"error": "User not found"}), 404
+    alang = _app_lang_from_row(urow)
     tz = urow.get("timezone") or DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     today = now_local.date()
@@ -565,7 +573,7 @@ def schedule_preview():
             return jsonify({"error": "No active rotating pattern", "days": []}), 404
         for i in range(nd):
             d = today + timedelta(days=i)
-            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), d)
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), d, lang=alang)
             if comp is not None:
                 days.append(_strip_schedule_windows_for_tier(urow, comp))
     else:
@@ -635,6 +643,7 @@ def today_daily():
     )
 
     urow = fetch_user_row_by_id(user_id)
+    alang = _app_lang_from_row(urow) if urow else "en"
 
     def _strip_free_windows(row_dict):
         if urow and not has_pro_entitlement(urow):
@@ -665,7 +674,7 @@ def today_daily():
         )
         if rpat.data:
             local = get_user_now_from_timezone_name(timezone).date()
-            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local)
+            comp = build_rotating_day_from_pattern_row(dict(rpat.data[0]), local, lang=alang)
             if comp is not None:
                 return jsonify(_strip_free_windows(comp))
         return jsonify({"error": "No active rotating pattern"}), 404
@@ -722,6 +731,8 @@ def caffeine_check():
     if err:
         return err
 
+    urow = fetch_user_row_by_id(user_id) or {}
+    clang = _app_lang_from_row(urow)
     const = (
         supabase_client.table("constant_schedules")
         .select("*")
@@ -730,12 +741,12 @@ def caffeine_check():
         .execute()
     )
     if not const.data:
-        return jsonify({"error": "No schedule found. Please set up your schedule first."}), 404
+        return jsonify({"error": mt("caff_err_no_sched", clang)}), 404
 
     schedule = const.data[0]
     sleep_start = schedule.get("sleep_start")
     if not sleep_start:
-        return jsonify({"error": "Sleep time not set in schedule."}), 400
+        return jsonify({"error": mt("caff_err_no_sleep", clang)}), 400
 
     tz_name = _user_timezone(user_id)
     now = get_user_now_from_timezone_name(tz_name)
@@ -751,17 +762,23 @@ def caffeine_check():
         minutes_until_sleep = int((sleep_dt - now).total_seconds() / 60)
         hours = minutes_until_sleep // 60
         mins = minutes_until_sleep % 60
-        message = (
-            f"🚫 **Caffeine window closed!**\n\nYou're within 6 hours of sleep.\n"
-            f"Sleep starts at {sleep_start_str} (in {hours}h {mins}m).\nCoffee now may disrupt your sleep."
+        message = mt(
+            "caff_closed",
+            clang,
+            t=sleep_start_str,
+            h=hours,
+            m=mins,
         )
     else:
         minutes_left = int((cutoff - now).total_seconds() / 60)
         hours_left = minutes_left // 60
         mins_left = minutes_left % 60
-        message = (
-            f"✅ **Safe for caffeine!**\n\nYou have {hours_left}h {mins_left}m left before the 6-hour sleep window closes.\n"
-            f"Last call: {cutoff.strftime('%H:%M')}"
+        message = mt(
+            "caff_open",
+            clang,
+            h=hours_left,
+            m=mins_left,
+            cutoff=cutoff.strftime("%H:%M"),
         )
 
     return jsonify({"message": message})
@@ -803,7 +820,8 @@ def set_day_off():
     else:
         supabase_client.table("daily_schedules").insert(payload).execute()
 
-    return jsonify({"ok": True, "message": "Day off set successfully!"})
+    urow = fetch_user_row_by_id(user_id) or {}
+    return jsonify({"ok": True, "message": mt("api_dayoff_ok", _app_lang_from_row(urow))})
 
 
 def _add_minutes_to_time_hhmm(tstr: str, delta_minutes: int) -> str:
@@ -829,6 +847,7 @@ def _set_habits_effective_from_today(user_id: str) -> None:
 
 def _build_weekly_suggestion_items(user_id) -> list:
     urow = fetch_user_row_by_id(user_id) or {}
+    lang = _app_lang_from_row(urow)
     tz = urow.get("timezone") or DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
@@ -940,14 +959,14 @@ def _build_weekly_suggestion_items(user_id) -> list:
         c_n, m_n, b_n = _tpl_windows(ntpl)
         c_d, m_d, b_d = _tpl_windows(dtpl)
         for it in build_bad_habit_suggestion_items(
-            ntpl.get("sleep_start"), c_n, m_n, b_n, "night"
+            ntpl.get("sleep_start"), c_n, m_n, b_n, "night", lang=lang
         ):
             suggestions.append(it)
         if pattern_includes_day_work(
             str(sh0.get("pattern_id") or "pitman_2_2_3"), int((sh0.get("block_days") or 0) or 0), sh0
         ) and dtpl:
             for it in build_bad_habit_suggestion_items(
-                dtpl.get("sleep_start"), c_d, m_d, b_d, "day"
+                dtpl.get("sleep_start"), c_d, m_d, b_d, "day", lang=lang
             ):
                 suggestions.append(it)
 
@@ -960,7 +979,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 if eff and d0 < eff:
                     d0 += timedelta(days=1)
                     continue
-                comp = build_rotating_day_from_pattern_row(rpatd, d0)
+                comp = build_rotating_day_from_pattern_row(rpatd, d0, lang=lang)
                 if (
                     not comp
                     or comp.get("pattern_slot") != pslot
@@ -996,16 +1015,18 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 return t_best, m_ct
             return None
 
-        for pslot, lab in (("night", "🌙 NIGHT"), ("day", "☀️ DAY")):
+        for pslot, labk in (("night", "sug_lab_night"), ("day", "sug_lab_day")):
+            lab = mt(labk, lang)
+            templ_w = mt("sug_templ_night", lang) if pslot == "night" else mt("sug_templ_day", lang)
             cm = _rot_missed_best(rprow, "coffee", pslot)
             if cm:
                 t_best, m_ct = cm
                 n_t = shift_time_hhmm(t_best, -30)
                 suggestions.append(
                     {
-                        "title": f"☕ {lab} · {t_best} coffee",
-                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
-                        "action": f"MOVE TO {n_t} (on {pslot} template)",
+                        "title": mt("sug_rot_coff_t", lang, lab=lab, t=t_best),
+                        "body": mt("sug_rot_coff_b", lang, n=m_ct, templ=templ_w),
+                        "action": mt("sug_rot_coff_a", lang, t=n_t, tpl=templ_w),
                         "apply": {
                             "op": "shift_coffee",
                             "from": t_best,
@@ -1020,9 +1041,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 n_t = shift_time_hhmm(t_best, -30)
                 suggestions.append(
                     {
-                        "title": f"🍽 {lab} · {t_best} meal",
-                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
-                        "action": f"MOVE TO {n_t} (on {pslot} template)",
+                        "title": mt("sug_rot_meal_t", lang, lab=lab, t=t_best),
+                        "body": mt("sug_rot_meal_b", lang, n=m_ct, templ=templ_w),
+                        "action": mt("sug_rot_meal_a", lang, t=n_t, tpl=templ_w),
                         "apply": {
                             "op": "shift_meal",
                             "from": t_best,
@@ -1040,7 +1061,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 if eff and d0 < eff:
                     d0 += timedelta(days=1)
                     continue
-                comp = build_rotating_day_from_pattern_row(rpatd, d0)
+                comp = build_rotating_day_from_pattern_row(rpatd, d0, lang=lang)
                 if (
                     not comp
                     or comp.get("pattern_slot") != pslot
@@ -1054,7 +1075,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 d0 += timedelta(days=1)
             return out_vals
 
-        for pslot, lab in (("night", "🌙 NIGHT"), ("day", "☀️ DAY")):
+        for pslot, labk in (("night", "sug_lab_night"), ("day", "sug_lab_day")):
             if pslot == "day" and (
                 not pattern_includes_day_work(
                     str(sh0.get("pattern_id") or "pitman_2_2_3"), int((sh0.get("block_days") or 0) or 0), sh0
@@ -1066,12 +1087,13 @@ def _build_weekly_suggestion_items(user_id) -> list:
             if svals:
                 avg_sq = sum(svals) / len(svals)
                 if avg_sq <= 2:
+                    lab = mt(labk, lang)
+                    templ_w = mt("sug_templ_night", lang) if pslot == "night" else mt("sug_templ_day", lang)
                     suggestions.append(
                         {
-                            "title": f"😴 {lab} · SLEEP WINDOW",
-                            "body": f"Sleep quality was low on your {pslot} shift days in the lookback period.",
-                            "action": "ADD 30 MINUTES (earlier to bed) on the "
-                            f"{pslot} template",
+                            "title": mt("sug_rot_sleep_t", lang, lab=lab),
+                            "body": mt("sug_rot_sleep_b", lang, templ=templ_w),
+                            "action": mt("sug_rot_sleep_a", lang, tpl=templ_w),
                             "apply": {
                                 "op": "extend_sleep",
                                 "delta_minutes": 30,
@@ -1116,7 +1138,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
     mwin = sorted(mwin, key=lambda x: time_minutes((x or {}).get("time")))
 
     for it in build_bad_habit_suggestion_items(
-        schedule.get("sleep_start"), cwin, mwin, bwin, None
+        schedule.get("sleep_start"), cwin, mwin, bwin, None, lang=lang
     ):
         suggestions.append(it)
 
@@ -1132,9 +1154,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
             n_t = shift_time_hhmm(_norm_slot_time(top_time), -30)
             suggestions.append(
                 {
-                    "title": f"☕ {top_time} COFFEE",
-                    "body": f"Missed {top_missed} times in days after your last schedule change.",
-                    "action": f"MOVE TO {n_t}",
+                    "title": mt("sug_const_coff_t", lang, t=top_time),
+                    "body": mt("sug_const_coff_b", lang, n=top_missed),
+                    "action": mt("sug_const_coff_a", lang, t=n_t),
                     "apply": {"op": "shift_coffee", "from": _norm_slot_time(top_time), "to": n_t},
                 }
             )
@@ -1151,9 +1173,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
             n_t = shift_time_hhmm(_norm_slot_time(top_time), -30)
             suggestions.append(
                 {
-                    "title": f"🍽️ {top_time} MEAL",
-                    "body": f"Missed {top_missed} times in days after your last schedule change.",
-                    "action": f"MOVE TO {n_t}",
+                    "title": mt("sug_const_meal_t", lang, t=top_time),
+                    "body": mt("sug_const_meal_b", lang, n=top_missed),
+                    "action": mt("sug_const_meal_a", lang, t=n_t),
                     "apply": {"op": "shift_meal", "from": _norm_slot_time(top_time), "to": n_t},
                 }
             )
@@ -1174,9 +1196,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 df = 8
             suggestions.append(
                 {
-                    "title": "😴 SLEEP WINDOW",
-                    "body": f"Sleep quality was low in days since your last schedule change.",
-                    "action": "ADD 30 MINUTES (earlier to bed)",
+                    "title": mt("sug_const_sleep_t", lang),
+                    "body": mt("sug_const_sleep_b", lang),
+                    "action": mt("sug_const_sleep_a", lang),
                     "apply": {"op": "extend_sleep", "delta_minutes": 30},
                 }
             )

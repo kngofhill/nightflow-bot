@@ -3981,3 +3981,34 @@ ul.nf-tl.nf-timeline {
     width: 100%;
     margin-top: 4px;
 }
+
+/* App language (settings) */
+.nf-lang-card {
+    margin-bottom: 10px;
+}
+.nf-lang-hint {
+    font-size: 0.8rem;
+    margin: 0 0 8px;
+}
+.nf-lang-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.nf-lang-pill {
+    font: inherit;
+    font-weight: 700;
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--nf-border, rgba(255, 255, 255, 0.12));
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.06));
+    color: var(--tg-theme-text-color, var(--nf-text));
+    cursor: pointer;
+}
+.nf-lang-pill.is-on {
+    border-color: var(--tg-theme-button-color, var(--nf-primary));
+    color: var(--tg-theme-button-text-color, #fff);
+    background: var(--tg-theme-button-color, var(--nf-primary));
+}
