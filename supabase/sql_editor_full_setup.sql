@@ -46,7 +46,7 @@ CREATE TABLE users (
     last_payment_is_recurring BOOLEAN,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_active TIMESTAMPTZ DEFAULT NOW(),
-    ui_language TEXT CHECK (ui_language IS NULL OR ui_language IN ('en', 'ru', 'uz'))
+    ui_language TEXT CHECK (ui_language IS NULL OR ui_language = 'en')
 );
 
 CREATE INDEX idx_users_telegram_id ON users(telegram_id);

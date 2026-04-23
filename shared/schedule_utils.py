@@ -2,8 +2,6 @@ import json
 from datetime import datetime, time, timedelta, date
 from typing import Any, Dict, List, Optional, Union
 
-from shared.miniapp_i18n import mt, norm_lang
-
 
 def str_to_time(time_str: str) -> Optional[time]:
     try:
@@ -64,9 +62,7 @@ def calculate_optimal_schedule(
     work_end: time,
     sleep_start_override: Optional[time] = None,
     sleep_end_override: Optional[time] = None,
-    lang: str = "en",
 ) -> Dict[str, Any]:
-    lang = norm_lang(lang)
     today = date.today()
     work_start_dt = datetime.combine(today, work_start)
     work_end_dt = datetime.combine(today, work_end)
@@ -96,14 +92,14 @@ def calculate_optimal_schedule(
     pre_work_coffee = work_start_dt - timedelta(minutes=30)
     coffee_windows.append({
         "time": pre_work_coffee.strftime("%H:%M"),
-        "message": mt("calc_coffee_pre", lang),
+        "message": "☕ Pre-shift coffee. Perfect timing to start alert.",
         "type": "pre_work"
     })
 
     mid_coffee = work_start_dt + timedelta(hours=3, minutes=30)
     coffee_windows.append({
         "time": mid_coffee.strftime("%H:%M"),
-        "message": mt("calc_coffee_mid", lang),
+        "message": "☕ Mid-shift boost. You're halfway there.",
         "type": "mid_shift"
     })
 
@@ -111,21 +107,21 @@ def calculate_optimal_schedule(
     pre_meal = work_start_dt - timedelta(hours=1, minutes=30)
     meal_windows.append({
         "time": pre_meal.strftime("%H:%M"),
-        "message": mt("calc_meal_pre", lang),
+        "message": "🍽️ Pre-shift meal. Protein + complex carbs for steady energy.",
         "type": "pre_work"
     })
 
     mid_meal = work_start_dt + timedelta(hours=4)
     meal_windows.append({
         "time": mid_meal.strftime("%H:%M"),
-        "message": mt("calc_meal_mid", lang),
+        "message": "🥗 Mid-shift fuel. Avoid heavy/greasy food.",
         "type": "mid_shift"
     })
 
     post_meal = work_end_dt
     meal_windows.append({
         "time": post_meal.strftime("%H:%M"),
-        "message": mt("calc_meal_post", lang),
+        "message": "🍌 Post-shift snack. Light before sleep. Banana is perfect.",
         "type": "post_work"
     })
 
@@ -133,7 +129,7 @@ def calculate_optimal_schedule(
     pre_bright = work_start_dt - timedelta(minutes=15)
     brightness_windows.append({
         "time": pre_bright.strftime("%H:%M"),
-        "message": mt("calc_bright", lang),
+        "message": "☀️ Bright light time. Tell your brain: wake up!",
         "type": "bright",
         "action": "increase_light"
     })
@@ -151,7 +147,7 @@ def calculate_optimal_schedule(
     dim_time = sleep_start_dt - timedelta(hours=2)
     brightness_windows.append({
         "time": dim_time.strftime("%H:%M"),
-        "message": mt("calc_dim", lang),
+        "message": "🌙 Time to dim lights. Tell your brain: sleep is coming.",
         "type": "dim",
         "action": "dim_lights"
     })
@@ -159,7 +155,7 @@ def calculate_optimal_schedule(
     no_screens = sleep_start_dt - timedelta(minutes=30)
     brightness_windows.append({
         "time": no_screens.strftime("%H:%M"),
-        "message": mt("calc_screens", lang),
+        "message": "📵 30 min until sleep. Put devices away. Read a book.",
         "type": "no_screens",
         "action": "no_screens"
     })
@@ -168,7 +164,7 @@ def calculate_optimal_schedule(
         commute_time = work_end_dt + timedelta(minutes=30)
         brightness_windows.append({
             "time": commute_time.strftime("%H:%M"),
-            "message": mt("calc_commute", lang),
+            "message": "🕶️ On the way home? Wear sunglasses. Blue light blockers help.",
             "type": "blue_block",
             "action": "wear_sunglasses"
         })
@@ -183,8 +179,7 @@ def calculate_optimal_schedule(
     }
 
 
-def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str = "en") -> Dict[str, List[Dict[str, Any]]]:
-    lang = norm_lang(lang)
+def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str) -> Dict[str, List[Dict[str, Any]]]:
     """
     Gentle coffee / meal / light suggestions for a rest (off) day, anchored to the
     recommended main sleep window only (no work times).
@@ -215,7 +210,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
             coffee.append(
                 {
                     "time": _t(c1),
-                    "message": mt("rest_coffee1", lang),
+                    "message": "☕ First coffee — after you’re truly awake. Skip if you’re still groggy.",
                     "type": "rest_day",
                 }
             )
@@ -225,7 +220,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
                 coffee.append(
                     {
                         "time": _t(c2),
-                        "message": mt("rest_coffee2", lang),
+                        "message": "☕ Optional second cup — keep before your wind-down window.",
                         "type": "rest_day",
                     }
                 )
@@ -236,7 +231,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
         meals.append(
             {
                 "time": _t(m1_dt),
-                "message": mt("rest_meal1", lang),
+                "message": "🍽 Main meal — steady protein; lighter than a heavy “celebration” dinner.",
                 "type": "rest_day",
             }
         )
@@ -246,7 +241,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
             meals.append(
                 {
                     "time": _t(m2),
-                    "message": mt("rest_meal2", lang),
+                    "message": "🥗 Mid-awake fuel — avoid your heaviest meal within 3h of bed.",
                     "type": "rest_day",
                 }
             )
@@ -259,7 +254,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
             meals.append(
                 {
                     "time": _t(m3),
-                    "message": mt("rest_meal3", lang),
+                    "message": "🍽 Earlier dinner — finish eating a few hours before lying down.",
                     "type": "rest_day",
                 }
             )
@@ -268,7 +263,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
         bright.append(
             {
                 "time": _t(awake_start + timedelta(minutes=20)),
-                "message": mt("rest_bl_bright", lang),
+                "message": "☀️ Bright light soon after waking — anchors your clock for the day.",
                 "type": "bright",
                 "action": "increase_light",
             }
@@ -278,7 +273,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
             bright.append(
                 {
                     "time": _t(dim),
-                    "message": mt("rest_bl_dim", lang),
+                    "message": "🌙 Start dimming lights — tells your brain sleep is coming.",
                     "type": "dim",
                     "action": "dim_lights",
                 }
@@ -288,7 +283,7 @@ def rest_day_habit_windows(sleep_start_str: str, sleep_end_str: str, lang: str =
             bright.append(
                 {
                     "time": _t(ns),
-                    "message": mt("rest_bl_ns", lang),
+                    "message": "📵 Wind-down — softer screens and lower light before bed.",
                     "type": "no_screens",
                     "action": "no_screens",
                 }
@@ -308,15 +303,9 @@ def is_within_caffeine_window(sleep_start: time, current_time: time) -> bool:
     return current_dt >= cutoff_dt
 
 
-def generate_transition_advice(
-    old_work_start: time,
-    old_work_end: time,
-    new_work_start: time,
-    new_work_end: time,
-    days_until_change: int,
-    lang: str = "en",
-) -> str:
-    lang = norm_lang(lang)
+def generate_transition_advice(old_work_start: time, old_work_end: time,
+                               new_work_start: time, new_work_end: time,
+                               days_until_change: int) -> str:
     old_start_dt = datetime.combine(date.today(), old_work_start)
     new_start_dt = datetime.combine(date.today(), new_work_start)
 
@@ -325,23 +314,30 @@ def generate_transition_advice(
 
     hours_diff = (new_start_dt - old_start_dt).total_seconds() / 3600
 
-    o1, o2 = time_to_str(old_work_start), time_to_str(old_work_end)
-    n1, n2 = time_to_str(new_work_start), time_to_str(new_work_end)
-    advice = mt("tr_adv_head", lang) + "\n\n"
-    advice += mt("tr_adv_line", lang, o1=o1, o2=o2, n1=n1, n2=n2) + "\n\n"
+    advice = f"🔄 **Shift Change Preparation**\n\n"
+    advice += f"Moving from {time_to_str(old_work_start)}-{time_to_str(old_work_end)} "
+    advice += f"to {time_to_str(new_work_start)}-{time_to_str(new_work_end)}\n\n"
 
     if hours_diff > 0:
-        advice += mt("tr_adv_late_h", lang, h=hours_diff) + "\n\n"
+        advice += f"Your new shift starts {hours_diff:.1f} hours later.\n\n"
 
         if hours_diff <= 3:
-            advice += mt("tr_adv_small", lang)
+            advice += "✅ Small adjustment. Stay up a bit later each night."
         elif hours_diff <= 6:
-            advice += mt("tr_adv_medium", lang)
+            advice += "⚡ Medium shift. Consider a split sleep schedule:\n"
+            advice += "• Nap 3-4 hours before first new shift\n"
+            advice += "• Then sleep 4-5 hours after shift"
         else:
-            advice += mt("tr_adv_large", lang)
+            advice += "⚠️ Large shift change. This will take a few days to adjust:\n"
+            advice += "• Day 1: Stay up 2 hours later than usual\n"
+            advice += "• Day 2: Stay up 4 hours later\n"
+            advice += "• Day 3: Full adjustment"
     else:
-        advice += mt("tr_adv_early_h", lang, h=abs(hours_diff)) + "\n\n"
-        advice += mt("tr_adv_early_s", lang)
+        advice += f"Your new shift starts {abs(hours_diff):.1f} hours earlier.\n\n"
+        advice += "Early transition strategy:\n"
+        advice += "• Go to bed earlier each night\n"
+        advice += "• Get bright light exposure immediately upon waking\n"
+        advice += "• Avoid caffeine 6 hours before new bedtime"
 
-    advice += "\n\n" + mt("tr_adv_foot", lang)
+    advice += "\n\nI'll send you daily transition reminders."
     return advice

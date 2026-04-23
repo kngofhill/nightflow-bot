@@ -34,7 +34,7 @@ from shared.db import (
     record_pro_refund_for_rate_limit,
     set_user_ui_language,
 )
-from shared.bot_i18n import PICK_LANGUAGE, INTRO, welcome_back, msg_language_saved, LANG_TITLE
+from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
 from shared.bot_menu import command_menu_markup, webapp_url
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
@@ -74,20 +74,8 @@ load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def _lang_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("English", callback_data="set_lang:en"),
-                InlineKeyboardButton("Русский", callback_data="set_lang:ru"),
-            ],
-            [InlineKeyboardButton("Oʻzbekcha", callback_data="set_lang:uz")],
-        ]
-    )
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Onboarding: pick language; then one short app overview. Return visits: short welcome in saved language."""
+    """English only: auto-set language, first /start shows intro HTML."""
     user = update.effective_user
     logger.info("Start from user %s", user.id)
 
@@ -97,57 +85,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_user = get_user_by_telegram_id(user.id)
     update_last_active(user.id, datetime.now().isoformat())
 
-    code = (db_user or {}).get("ui_language")
-    if not code:
-        await update.message.reply_text(
-            PICK_LANGUAGE, reply_markup=_lang_keyboard()
-        )
-        return
+    had_lang = bool((db_user or {}).get("ui_language"))
+    if not had_lang:
+        if not set_user_ui_language(user.id, "en"):
+            await update.message.reply_text("Could not save profile. Try /start again.")
+            return
+        db_user = get_user_by_telegram_id(user.id)
 
-    await update.message.reply_text(
-        welcome_back(user.first_name or "there", code),
-        reply_markup=command_menu_markup(),
-    )
+    if not had_lang:
+        await update.message.reply_text(
+            INTRO,
+            parse_mode="HTML",
+            reply_markup=command_menu_markup(),
+        )
+    else:
+        await update.message.reply_text(
+            welcome_back(user.first_name or "there", "en"),
+            reply_markup=command_menu_markup(),
+        )
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Change app/bot language (mini app reads the same from the API)."""
-    await update.message.reply_text(LANG_TITLE, reply_markup=_lang_keyboard())
+    await update.message.reply_text(LANG_ONLY, parse_mode="HTML")
 
 
 async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Legacy inline buttons (set_lang:*) — only English is stored."""
     q = update.callback_query
     if not q or not q.data or not str(q.data).startswith("set_lang:"):
         return
-    part = str(q.data).split(":", 1)
-    lang = part[1] if len(part) > 1 else ""
-    if lang not in ("en", "ru", "uz"):
-        await q.answer()
-        return
-
     tid = q.from_user.id
-    row_before = get_user_by_telegram_id(tid) or {}
-    had_lang = bool(row_before.get("ui_language"))
-    if not set_user_ui_language(tid, lang):
+    if not set_user_ui_language(tid, "en"):
         await q.answer("Could not save. Try again.", show_alert=True)
         return
     await q.answer()
-
-    text = msg_language_saved(lang) if had_lang else INTRO.get(lang, INTRO["en"])
-    parse = "HTML" if not had_lang else None
     try:
         await q.edit_message_text(
-            text=text,
-            parse_mode=parse,
+            text=msg_language_saved("en"),
             reply_markup=command_menu_markup(),
         )
     except Exception as e:
-        logger.warning("edit_message after lang pick: %s", e)
+        logger.warning("edit_message after lang: %s", e)
         try:
             await context.bot.send_message(
                 chat_id=tid,
-                text=text,
-                parse_mode=parse,
+                text=msg_language_saved("en"),
                 reply_markup=command_menu_markup(),
             )
         except Exception as e2:
@@ -229,9 +211,7 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif act == "resume":
         await deliver_resume(context, chat_id, uid)
     elif act == "lang":
-        await context.bot.send_message(
-            chat_id, LANG_TITLE, reply_markup=_lang_keyboard()
-        )
+        await context.bot.send_message(chat_id, LANG_ONLY, parse_mode="HTML")
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):

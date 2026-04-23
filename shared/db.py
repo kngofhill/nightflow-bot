@@ -96,12 +96,10 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
-def set_user_ui_language(telegram_id: int, lang: str) -> bool:
-    """Persists app/bot language. ``lang`` must be en, ru, or uz."""
-    if lang not in ("en", "ru", "uz"):
-        return False
+def set_user_ui_language(telegram_id: int, _lang: str) -> bool:
+    """App language is English only; ``lang`` is ignored and stored as en."""
     try:
-        supabase_client.table("users").update({"ui_language": lang}).eq("telegram_id", telegram_id).execute()
+        supabase_client.table("users").update({"ui_language": "en"}).eq("telegram_id", telegram_id).execute()
         return True
     except Exception as e:
         logger.error("set_user_ui_language: %s", e)

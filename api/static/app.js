@@ -106,8 +106,6 @@
     }
 
     function getLocale() {
-        const l = state.userRow && state.userRow.ui_language;
-        if (l === 'en' || l === 'ru' || l === 'uz') return l;
         return 'en';
     }
 
@@ -127,39 +125,10 @@
 
     function syncDocumentLang() {
         try {
-            const m = { en: 'en', ru: 'ru', uz: 'uz' };
-            document.documentElement.lang = m[getLocale()] || 'en';
+            document.documentElement.lang = 'en';
         } catch (e) {
             /* ignore */
         }
-    }
-
-    function languagePickerHtml() {
-        const cur = getLocale();
-        const b = (code) =>
-            `<button type="button" class="nf-lang-pill${cur === code ? ' is-on' : ''}" data-nf-lang="${code}">${code.toUpperCase()}</button>`;
-        return `<div class="nf-card nf-lang-card">
-            <p class="nf-field-label">${escapeHtml(t('stLang'))}</p>
-            <p class="nf-muted nf-lang-hint">${escapeHtml(t('stLangHint'))}</p>
-            <div class="nf-lang-row">${b('en')}${b('ru')}${b('uz')}</div>
-        </div>`;
-    }
-
-    function wireAppLanguagePills() {
-        $root.querySelectorAll('[data-nf-lang]').forEach((btn) => {
-            btn.addEventListener('click', async () => {
-                const code = btn.getAttribute('data-nf-lang');
-                if (!code || !['en', 'ru', 'uz'].includes(code)) return;
-                const row = await patchUserMe({ ui_language: code });
-                if (!row) {
-                    tg.showAlert(t('errSave'));
-                    return;
-                }
-                state.userRow = row;
-                syncDocumentLang();
-                render();
-            });
-        });
     }
 
     function localDateStrNow() {
@@ -791,13 +760,6 @@
         return m;
     }
 
-    function shortHintByKind(kind) {
-        if (kind === 'coffee') return t('stCoff');
-        if (kind === 'meal') return t('stMeal');
-        if (kind === 'light') return t('stLight');
-        return '';
-    }
-
     function collectEvents(schedule) {
         const ev = [];
         const seen = new Set();
@@ -836,19 +798,13 @@
             push(schedule.sleep_end, t('evWake') + ' · ' + t('sleep'), '☀️', 'sleep_end');
         }
         (schedule.meal_windows || []).forEach((w) => {
-            if (!w || !w.time) return;
-            const ts = formatTime(w.time);
-            push(w.time, `${t('stMeal')} — ${ts}`, '🍽️', 'meal');
+            push(w.time, (w && w.message) || t('stMeal'), '🍽️', 'meal');
         });
         (schedule.coffee_windows || []).forEach((w) => {
-            if (!w || !w.time) return;
-            const ts = formatTime(w.time);
-            push(w.time, `${t('stCoff')} — ${ts}`, '☕', 'coffee');
+            push(w.time, (w && w.message) || t('stCoff'), '☕', 'coffee');
         });
         (schedule.brightness_windows || []).forEach((w) => {
-            if (!w || !w.time) return;
-            const ts = formatTime(w.time);
-            push(w.time, `${t('stLight')} — ${ts}`, '💡', 'light');
+            push(w.time, (w && w.message) || t('stLight'), '💡', 'light');
         });
 
         ev.sort((a, b) => a.sort - b.sort);
@@ -939,6 +895,7 @@
         const next = best || raw[0];
         const h = Math.floor(bestDelta / 60);
         const m = Math.round(bestDelta % 60);
+        const shortLabel = (next.label || '').split('.')[0];
         const cat = eventKindToCategory(next.kind);
         const kLabel =
             cat === 'work'
@@ -952,13 +909,8 @@
                       : cat === 'light'
                         ? t('stLight')
                         : t('evTE');
-        const isWin = cat === 'meal' || cat === 'coffee' || cat === 'light';
-        const shortLabel = isWin ? '' : (next.label || '').split('.')[0];
-        const line = isWin
-            ? `${kLabel} — ${next.icon} · ${next.time}`
-            : `${kLabel} — ${next.icon} ${shortLabel} · ${next.time}`;
         return {
-            line,
+            line: `${kLabel} — ${next.icon} ${shortLabel} · ${next.time}`,
             sub: t('inHM', h, m),
             icon: next.icon,
             kindClass: cat,
@@ -1074,8 +1026,7 @@
             const res = await api('/subscription/invoice-link', { method: 'POST', json: {} });
             const data = await res.json().catch(() => ({}));
             if (res.status === 409) {
-                if (data && data.error) console.warn('openProInvoice', data.error);
-                tg.showAlert(t('proHasSub'));
+                tg.showAlert(data.error || t('proHasSub'));
                 if (data.pro_expires_at && state.userRow) {
                     state.userRow = {
                         ...state.userRow,
@@ -1286,9 +1237,8 @@
                 );
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    if (err && err.error) console.warn('setup constant', err.error);
                     $root.innerHTML = `<div class="nf-error">${escapeHtml(
-                        t('saveErrHtml')
+                        err.error || t('saveErrHtml')
                     )}</div>`;
                     return;
                 }
@@ -1531,9 +1481,8 @@
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    if (err && err.error) console.warn('rotating save', err.error);
                     $root.innerHTML = `<div class="nf-error">${escapeHtml(
-                        t('errRotSave')
+                        err.error || t('errRotSave')
                     )}</div>`;
                     return;
                 }
@@ -1552,19 +1501,19 @@
     function mockSuggestions() {
         return [
             {
-                title: t('mockCoffT'),
-                body: t('mockCoffB'),
-                action: t('mockCoffA'),
+                title: '☕ 01:30 COFFEE',
+                body: 'Missed 4 times this week.',
+                action: 'MOVE TO 01:00',
             },
             {
-                title: t('mockMealT'),
-                body: t('mockMealB'),
-                action: t('mockMealA'),
+                title: '🍽️ 02:00 MEAL',
+                body: 'Missed 5 times this week.',
+                action: 'MOVE TO 01:30',
             },
             {
-                title: t('mockSleepT'),
-                body: t('mockSleepB'),
-                action: t('mockSleepA'),
+                title: '😴 SLEEP WINDOW',
+                body: 'Deficit: 8 hours this week.',
+                action: 'ADD 30 MINUTES',
             },
         ];
     }
@@ -2228,8 +2177,7 @@
                         });
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) {
-                            if (data && data.error) console.warn('suggestions apply', data.error);
-                            tg.showAlert(t('errApply'));
+                            tg.showAlert((data && data.error) || t('errApply'));
                             applyBtn.removeAttribute('disabled');
                             return;
                         }
@@ -2596,7 +2544,6 @@
             <div class="nf-screen nf-screen--tabbed nf-free-settings">
                 <div class="nf-tabbar-body">
                 ${topbarMainTabPage(t('stTitle'))}
-                ${languagePickerHtml()}
                 <p class="nf-free-settings-lead">${escapeHtml(t('stFreeL'))}</p>
                 <div class="nf-card nf-free-readonly">
                     <h3 class="nf-free-h3">📅 ${escapeHtml(t('stFreeWS'))}</h3>
@@ -2626,7 +2573,6 @@
             </div>`;
         wireMainTabTopbar();
         bindMainTabBar();
-        wireAppLanguagePills();
         document.getElementById('btn-settings-pro').onclick = () => openProInvoice();
     }
 
@@ -2848,7 +2794,6 @@
             <div class="nf-screen nf-screen--tabbed">
                 <div class="nf-tabbar-body">
                 ${topbarMainTabPage(t('stTitle'))}
-                ${languagePickerHtml()}
                 ${paidNotice}
                 ${trialPayBlock}
                 ${workSleepBlock}
@@ -2890,7 +2835,6 @@
 
         wireMainTabTopbar();
         bindMainTabBar();
-        wireAppLanguagePills();
         const btnStars = document.getElementById('btn-settings-stars');
         if (btnStars) btnStars.onclick = () => openProInvoice();
         const btnSchedType = document.getElementById('btn-change-schedule-type');
@@ -3076,7 +3020,7 @@
                 const tm = w.time || '12:00';
                 const lab = labelFor(i);
                 return `<p class="nf-field-label">${escapeHtml(lab)}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind(kind))}</div>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || '')}</div>
             <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(t('stTimeL'))}</span>${selectTimeHtml(
                     '',
                     tm,
@@ -3136,8 +3080,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('rotating windows save', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3222,8 +3165,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('rotating template', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3300,8 +3242,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('constant work/sleep', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     state.screen = 'settings';
                     render();
                     return;
@@ -3336,7 +3277,7 @@
             .map((w, i) => {
                 const tm = w.time || '22:00';
                 return `<p class="nf-field-label">${escapeHtml(coffLab(i))}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('coffee'))}</div>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || t('stCoff'))}</div>
             <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
                 t('stTimeL')
             )}</span>${selectTimeHtml('', tm, `c-${i}`)}</div></div>`;
@@ -3380,8 +3321,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('constant coffee', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3406,7 +3346,7 @@
             .map((w, i) => {
                 const tm = w.time || '12:00';
                 return `<p class="nf-field-label">${escapeHtml(t('mdlMealI', i + 1))}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('meal'))}</div>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || t('stMeal'))}</div>
             <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
                 t('stTimeL')
             )}</span>${selectTimeHtml('', tm, `m-${i}`)}</div></div>`;
@@ -3450,8 +3390,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('constant meal', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3481,7 +3420,7 @@
             .map((w, i) => {
                 const tm = w.time || '21:00';
                 return `<p class="nf-field-label">${escapeHtml(t('mdlRemI', i))}</p>
-            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(shortHintByKind('light'))}</div>
+            <div class="nf-card"><div class="nf-muted tiny">${escapeHtml(w.message || t('stLight'))}</div>
             <div class="nf-row" style="margin-top:8px;"><span>${escapeHtml(
                 t('stTimeL')
             )}</span>${selectTimeHtml('', tm, `l-${i}`)}</div></div>`;
@@ -3530,8 +3469,7 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    if (data && data.error) console.warn('constant light', data.error);
-                    tg.showAlert(t('errSaveSt'));
+                    tg.showAlert(data.error || t('errSaveSt'));
                     return;
                 }
                 applyConstantRowToState(data);
@@ -3827,8 +3765,7 @@
             </div>`;
         };
 
-        const dateLoc = { en: 'en-US', ru: 'ru-RU', uz: 'uz-UZ' }[getLocale()] || 'en-US';
-        const dateLong = d.toLocaleDateString(dateLoc, {
+        const dateLong = d.toLocaleDateString('en-US', {
             weekday: 'long',
             month: 'long',
             day: 'numeric',

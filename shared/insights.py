@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from shared.miniapp_i18n import mt, norm_lang
 from shared.schedule_utils import str_to_time, time_to_str, safe_json_parse
 
 HABITS_EFFECTIVE_KEY = "habits_effective_from"
@@ -58,7 +57,6 @@ def build_bad_habit_suggestion_items(
     meal_windows: list,
     brightness_windows: list,
     template: Optional[str] = None,
-    lang: str = "en",
 ) -> List[dict]:
     """
     Heuristics (same idea as _wellness_suggestions_for_day):
@@ -71,8 +69,7 @@ def build_bad_habit_suggestion_items(
     if not slp:
         return []
     slpm = _m(slp)
-    lang = norm_lang(lang)
-    tlabel = mt("in_tpl_night", lang) if template == "night" else mt("in_tpl_day", lang) if template == "day" else ""
+    tlabel = f"🌙 Night · " if template == "night" else f"☀️ Day · " if template == "day" else ""
     out: List[dict] = []
 
     for w in coffee_windows or []:
@@ -86,9 +83,9 @@ def build_bad_habit_suggestion_items(
             ts = time_to_str(t)
             to_t = _add_minutes_hhmm(ts, -60)
             it = {
-                "title": mt("in_coffee_t", lang, tlabel=tlabel),
-                "body": mt("in_coffee_b", lang, ts=ts),
-                "action": mt("in_coffee_a", lang, to_t=to_t),
+                "title": f"☕ {tlabel}Coffee may be too close to sleep",
+                "body": f"Last cup at {ts} is within 5h of bedtime on this template — that can break rest for some people.",
+                "action": f"Nudge to {to_t} (or edit in Settings).",
                 "apply": {
                     "op": "shift_coffee",
                     "from": ts,
@@ -111,9 +108,9 @@ def build_bad_habit_suggestion_items(
             ts = time_to_str(t)
             to_t = _add_minutes_hhmm(ts, -30)
             it = {
-                "title": mt("in_meal_t", lang, tlabel=tlabel),
-                "body": mt("in_meal_b", lang, ts=ts),
-                "action": mt("in_meal_a", lang, to_t=to_t),
+                "title": f"🍽 {tlabel}Meal may be too close to sleep",
+                "body": f"Eating at {ts} is within 3h of bed — a lighter/earlier last meal on this pattern may help.",
+                "action": f"Nudge to {to_t} (or edit in Settings).",
                 "apply": {
                     "op": "shift_meal",
                     "from": ts,
@@ -136,9 +133,9 @@ def build_bad_habit_suggestion_items(
             ts = time_to_str(t)
             to_t = _add_minutes_hhmm(ts, -30)
             it = {
-                "title": mt("in_bright_t", lang, tlabel=tlabel),
-                "body": mt("in_bright_b", lang, ts=ts),
-                "action": mt("in_bright_a", lang, to_t=to_t),
+                "title": f"💡 {tlabel}Light may be too close to bed",
+                "body": f"Brightness at {ts} is right before you lie down — your eyes will thank you for a dimmer cue earlier.",
+                "action": f"Nudge to {to_t} (or edit in Settings).",
                 "apply": {
                     "op": "shift_bright",
                     "from": ts,

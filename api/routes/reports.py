@@ -10,7 +10,6 @@ from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.schedule_utils import safe_json_parse, str_to_time, time_to_str
 from shared.insights import get_habits_effective_from_date, week_query_start
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
-from shared.miniapp_i18n import norm_lang
 from api.request_util import get_user_from_request
 from api.subscription_access import require_pro_access, fetch_user_row_by_id
 
@@ -51,7 +50,6 @@ def weekly_report():
         return denied
 
     urow = fetch_user_row_by_id(user_id) or {}
-    r_lang = norm_lang(urow.get("ui_language"))
     tz = urow.get("timezone") or DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
@@ -117,7 +115,7 @@ def weekly_report():
             if eff and d0 < eff:
                 d0 += timedelta(days=1)
                 continue
-            comp = build_rotating_day_from_pattern_row(rpatd, d0, lang=r_lang)
+            comp = build_rotating_day_from_pattern_row(rpatd, d0)
             if not comp or comp.get("pattern_slot") != pslot or comp.get("shift_type") == "off":
                 d0 += timedelta(days=1)
                 continue
