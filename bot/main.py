@@ -15,7 +15,7 @@ from telegram import (
     InlineKeyboardMarkup,
 )
 import telegram.error as tg_error
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 from telegram.ext import MessageHandler, filters, PreCheckoutQueryHandler
 
 from dotenv import load_dotenv
@@ -32,7 +32,9 @@ from shared.db import (
     revoke_pro_subscription,
     mark_star_subscription_cancelled,
     record_pro_refund_for_rate_limit,
+    set_user_ui_language,
 )
+from shared.bot_i18n import PICK_LANGUAGE, INTRO, welcome_back, msg_language_saved, LANG_TITLE
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
     MAX_PRO_REFUNDS_PER_UTC_MONTH,
@@ -71,32 +73,74 @@ load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Your existing command handlers (start, pause, resume) remain the same
+def _lang_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("English", callback_data="set_lang:en"),
+                InlineKeyboardButton("Русский", callback_data="set_lang:ru"),
+            ],
+            [InlineKeyboardButton("Oʻzbekcha", callback_data="set_lang:uz")],
+        ]
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome message - menu button already opens mini-app."""
+    """Onboarding: pick language; then one short app overview. Return visits: short welcome in saved language."""
     user = update.effective_user
-    logger.info(f"Start command from user {user.id}")
-    
-    # Ensure user exists in DB
+    logger.info("Start from user %s", user.id)
+
     db_user = get_user_by_telegram_id(user.id)
     if not db_user:
         upsert_user(user.id, user.username, user.first_name, None)
+        db_user = get_user_by_telegram_id(user.id)
     update_last_active(user.id, datetime.now().isoformat())
 
+    code = (db_user or {}).get("ui_language")
+    if not code:
+        await update.message.reply_text(PICK_LANGUAGE, reply_markup=_lang_keyboard())
+        return
+
     await update.message.reply_text(
-        f"👋 Welcome to Nightflow, {user.first_name}!\n\n"
-        f"Use the menu button below ⬇️ to open the app.\n\n"
-        # TESTING ONLY — revert welcome copy before production (was 14-day trial, 50 Stars).
-        f"🎁 New accounts get a short Pro trial (TESTING: ~5 minutes, full features).\n"
-        f"After that, stay on Free (today’s basics) or subscribe with {PRO_PRICE_STARS} Stars / 30 days via /subscribe.\n\n"
-        f"Commands:\n"
-        f"/subscribe — Nightflow Pro (Telegram Stars)\n"
-        f"/cancel — Stop Pro auto-renewal (same as app; keeps Pro until expiry)\n"
-        f"/status — Trial / Pro debug (TESTING)\n"
-        f"/refund — Refund Stars (within 3 days; max {MAX_PRO_REFUNDS_PER_UTC_MONTH}/month; revokes Pro)\n"
-        f"/pause — Pause notifications (Pro)\n"
-        f"/resume — Resume notifications"
+        welcome_back(user.first_name or "there", code)
     )
+
+
+async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Change app/bot language (mini app reads the same from the API)."""
+    await update.message.reply_text(LANG_TITLE, reply_markup=_lang_keyboard())
+
+
+async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not q or not q.data or not str(q.data).startswith("set_lang:"):
+        return
+    part = str(q.data).split(":", 1)
+    lang = part[1] if len(part) > 1 else ""
+    if lang not in ("en", "ru", "uz"):
+        await q.answer()
+        return
+
+    tid = q.from_user.id
+    row_before = get_user_by_telegram_id(tid) or {}
+    had_lang = bool(row_before.get("ui_language"))
+    if not set_user_ui_language(tid, lang):
+        await q.answer("Could not save. Try again.", show_alert=True)
+        return
+    await q.answer()
+
+    text = msg_language_saved(lang) if had_lang else INTRO.get(lang, INTRO["en"])
+    parse = "HTML" if not had_lang else None
+    try:
+        await q.edit_message_text(text=text, parse_mode=parse, reply_markup=None)
+    except Exception as e:
+        logger.warning("edit_message after lang pick: %s", e)
+        try:
+            await context.bot.send_message(
+                chat_id=tid, text=text, parse_mode=parse
+            )
+        except Exception as e2:
+            logger.error("send_message after lang: %s", e2)
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pause notifications."""
@@ -592,6 +636,8 @@ def main():
     
     # Add handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("lang", cmd_lang))
+    application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
     application.add_handler(CommandHandler("pause", pause))
     application.add_handler(CommandHandler("resume", resume))
     application.add_handler(CommandHandler("subscribe", subscribe))

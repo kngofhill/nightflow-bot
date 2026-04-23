@@ -105,6 +105,35 @@
             .replace(/"/g, '&quot;');
     }
 
+    function getLocale() {
+        const l = state.userRow && state.userRow.ui_language;
+        if (l === 'en' || l === 'ru' || l === 'uz') return l;
+        return 'en';
+    }
+
+    /** UI string. Functions in locales are called with extra args. */
+    function t(k) {
+        const L = window.NF_LOCALES;
+        if (!L) return k;
+        const loc = getLocale();
+        const row = L[loc] || L.en;
+        const pick = row && row[k] !== undefined && row[k] !== '' ? row[k] : L.en[k];
+        const v = pick !== undefined ? pick : k;
+        if (typeof v === 'function') {
+            return v.apply(null, Array.prototype.slice.call(arguments, 1));
+        }
+        return v;
+    }
+
+    function syncDocumentLang() {
+        try {
+            const m = { en: 'en', ru: 'ru', uz: 'uz' };
+            document.documentElement.lang = m[getLocale()] || 'en';
+        } catch (e) {
+            /* ignore */
+        }
+    }
+
     function localDateStrNow() {
         return new Date().toISOString().slice(0, 10);
     }
@@ -890,18 +919,16 @@
     }
 
     function shiftTitle(st) {
-        if (st === 'night') return '🌙 NIGHT SHIFT';
-        if (st === 'day') return '☀️ DAY SHIFT';
-        if (st === 'evening') return '🌆 EVENING SHIFT';
-        return 'SHIFT';
+        if (st === 'night') return t('shiftNight');
+        if (st === 'day') return t('shiftDay');
+        if (st === 'evening') return t('shiftEve');
+        return t('shiftDef');
     }
 
     function go(screen, pushStack) {
         const proOnly = ['full', 'suggestions', 'weekly', 'summary', 'transition'];
         if (proOnly.includes(screen) && !hasProEntitlement()) {
-            tg.showAlert(
-                'This area is part of Nightflow Pro. Use “Upgrade to Pro” on the home screen to unlock it.'
-            );
+            tg.showAlert(t('proGateGo'));
             return;
         }
         if (pushStack) state.stack.push(state.screen);
@@ -928,9 +955,7 @@
     function goMainTab(screen) {
         if (!MAIN_TAB_SCREENS.has(screen)) return;
         if (['full', 'weekly', 'suggestions'].includes(screen) && !hasProEntitlement()) {
-            tg.showAlert(
-                'This area is part of Nightflow Pro. Use “Upgrade to Pro” on the home tab to unlock it.'
-            );
+            tg.showAlert(t('proGate'));
             return;
         }
         state.stack = [];
@@ -950,17 +975,17 @@
             </button>`;
         };
         if (hasProEntitlement()) {
-            return `<nav class="nf-main-tabbar" role="tablist" aria-label="Main sections">
-                ${mk('dashboard', 'Home', '🌙')}
-                ${mk('full', 'Schedule', '📅')}
-                ${mk('weekly', 'Week', '📊')}
-                ${mk('suggestions', 'Ideas', '💡')}
-                ${mk('settings', 'Settings', '⚙️')}
+            return `<nav class="nf-main-tabbar" role="tablist" aria-label="${escapeHtml(t('mainNav'))}">
+                ${mk('dashboard', t('tabHome'), '🌙')}
+                ${mk('full', t('tabSchedule'), '📅')}
+                ${mk('weekly', t('tabWeek'), '📊')}
+                ${mk('suggestions', t('tabIdeas'), '💡')}
+                ${mk('settings', t('tabSettings'), '⚙️')}
             </nav>`;
         }
-        return `<nav class="nf-main-tabbar nf-main-tabbar--free" role="tablist" aria-label="Main sections">
-            ${mk('dashboard', 'Home', '🌙')}
-            ${mk('settings', 'Settings', '⚙️')}
+        return `<nav class="nf-main-tabbar nf-main-tabbar--free" role="tablist" aria-label="${escapeHtml(t('mainNav'))}">
+            ${mk('dashboard', t('tabHome'), '🌙')}
+            ${mk('settings', t('tabSettings'), '⚙️')}
         </nav>`;
     }
 
@@ -1556,16 +1581,14 @@
         return segs.length ? `conic-gradient(${segs.join(', ')})` : 'var(--tg-theme-secondary-bg-color, #3a3a45)';
     }
 
-    function weekTrendLabel(t) {
-        if (t === 'up') {
-            return '<div class="nf-trend nf-trend--in-header nf-trend--up"><span class="nf-trend-ico" aria-hidden="true">↑</span> Energy tilts <strong>up</strong> later in the week</div>';
-        }
-        if (t === 'down') {
-            return '<div class="nf-trend nf-trend--in-header nf-trend--down"><span class="nf-trend-ico" aria-hidden="true">↓</span> Energy leans <strong>heavier</strong> than at the start</div>';
-        }
-        if (t === 'steady') {
-            return '<div class="nf-trend nf-trend--in-header nf-trend--mid"><span class="nf-trend-ico" aria-hidden="true">→</span> Energy held <strong>steady</strong> day to day</div>';
-        }
+    function weekTrendLabel(tr) {
+        const a = (cls, ico, msg) =>
+            `<div class="nf-trend nf-trend--in-header ${cls}"><span class="nf-trend-ico" aria-hidden="true">${ico}</span> ${escapeHtml(
+                msg
+            )}</div>`;
+        if (tr === 'up') return a('nf-trend--up', '↑', t('wkTrU'));
+        if (tr === 'down') return a('nf-trend--down', '↓', t('wkTrD'));
+        if (tr === 'steady') return a('nf-trend--mid', '→', t('wkTrM'));
         return '';
     }
 
@@ -1683,17 +1706,17 @@
                 <div class="nf-tabbar-body">
                 <div class="nf-topbar">
                     <span class="nf-topbar-ghost" aria-hidden="true"></span>
-                    <h1>🌙 NIGHTFLOW</h1>
+                    <h1>🌙 ${escapeHtml(t('brand').toUpperCase())}</h1>
                     <span class="nf-clock">${escapeHtml(clock)}</span>
                 </div>
                 <div class="nf-home-quick">
                     <button type="button" class="nf-home-dayoff" id="btn-home-dayoff">
                         <span class="nf-home-dayoff-ico" aria-hidden="true">😴</span>
-                        <span>Mark day off</span>
+                        <span>${escapeHtml(t('markOff'))}</span>
                     </button>
                 </div>
                 <div class="nf-card">
-                    <div class="nf-card-label">Today</div>
+                    <div class="nf-card-label">${escapeHtml(t('today'))}</div>
                     <div class="nf-today-line">${escapeHtml(formatLongDate(today).toUpperCase())}</div>
                     ${
                         rotating && (sched.pattern_slot || sched.pattern_id)
@@ -1734,10 +1757,10 @@
                     : '';
             const offLead = sched.transition_advice
                 ? escapeHtml(sched.transition_advice)
-                : 'No shift work today — focus on recovery sleep and gentle habits until your next block.';
+                : escapeHtml(t('offDefLead'));
             body += `
                 <div class="nf-card nf-off-card">
-                    <div class="nf-shift-title off">${rotating ? 'OFF DAY' : 'DAY OFF'}</div>
+                    <div class="nf-shift-title off">${rotating ? escapeHtml(t('offRot')) : escapeHtml(t('offD'))}</div>
                     ${
                         slotLine
                             ? `<p class="nf-off-slot-line"><span class="nf-off-slot-ico" aria-hidden="true">${escapeHtml(
@@ -1747,12 +1770,12 @@
                     }
                     <p class="nf-muted nf-off-lead">${offLead}</p>
                     <div class="nf-off-sleep-strip">
-                        <span class="nf-off-sleep-k">Sleep focus</span>
+                        <span class="nf-off-sleep-k">${escapeHtml(t('sleep'))}</span>
                         <span class="nf-off-sleep-v">${escapeHtml(formatTime(sched.sleep_start))} – ${escapeHtml(
                 formatTime(sched.sleep_end)
             )}</span>
                     </div>
-                    <button type="button" class="nf-cta" id="btn-off-rec">View recommendations</button>
+                    <button type="button" class="nf-cta" id="btn-off-rec">${escapeHtml(t('offRec'))}</button>
                 </div>`;
         } else {
             const isFree = !hasProEntitlement();
@@ -1760,59 +1783,59 @@
             // TESTING ONLY — revert ?? fallback to 50 before production
             const stars = state.userRow?.pro_price_stars ?? 1;
             if (!paidPro && isFree) {
-                body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
-                    <div class="nf-upgrade-hero-title">Nightflow Pro</div>
-                    <p class="nf-upgrade-hero-text">Get notifications, full schedule, weekly insights, and more.</p>
-                    <p class="nf-upgrade-hero-price">${stars} Stars / 30 days</p>
-                    <button type="button" class="nf-btn-pro" id="btn-dash-pro">Upgrade to Pro</button>
+                body += `<div class="nf-upgrade-hero" role="region" aria-label="${escapeHtml(t('proAppName'))}">
+                    <div class="nf-upgrade-hero-title">${escapeHtml(t('proHeroTitle'))}</div>
+                    <p class="nf-upgrade-hero-text">${escapeHtml(t('proBannerBody'))}</p>
+                    <p class="nf-upgrade-hero-price">${escapeHtml(t('proBannerPrice', stars))}</p>
+                    <button type="button" class="nf-btn-pro" id="btn-dash-pro">${escapeHtml(t('proBannerBtn'))}</button>
                 </div>`;
             }
             body += `
                 <div class="nf-card">
                     <div class="nf-shift-title ${escapeHtml(st)}">${shiftTitle(st)}</div>
-                    <div class="nf-bar-row"><span class="nf-bar-label">Work</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.work_start))}</span><span>${escapeHtml(formatTime(sched.work_end))}</span></div><div class="nf-bar-track"></div></div></div>
-                    <div class="nf-bar-row"><span class="nf-bar-label">Sleep</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.sleep_start))}</span><span>${escapeHtml(formatTime(sched.sleep_end))}</span></div><div class="nf-bar-track"></div></div></div>
+                    <div class="nf-bar-row"><span class="nf-bar-label">${escapeHtml(t('work'))}</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.work_start))}</span><span>${escapeHtml(formatTime(sched.work_end))}</span></div><div class="nf-bar-track"></div></div></div>
+                    <div class="nf-bar-row"><span class="nf-bar-label">${escapeHtml(t('sleep'))}</span><div style="flex:1;"><div class="nf-bar-times"><span>${escapeHtml(formatTime(sched.sleep_start))}</span><span>${escapeHtml(formatTime(sched.sleep_end))}</span></div><div class="nf-bar-track"></div></div></div>
                 </div>
                 <div class="nf-card nf-next-card nf-next-card--${escapeHtml(
                     (next && next.kindClass) || 'other'
                 )}">
                     <div class="nf-next-label"><span class="nf-next-chip">${escapeHtml(
-                        (next && next.kindLabel) || 'Next'
-                    )}</span> · Up next</div>
-                    <div class="nf-next-main">${escapeHtml(next.line)}</div>
-                    <div class="nf-next-sub">${escapeHtml(next.sub)}</div>
+                        (next && next.kindLabel) || t('nextLabel')
+                    )}</span> ${escapeHtml(t('nextAfter'))}</div>
+                    <div class="nf-next-main">${escapeHtml(next ? next.line : '')}</div>
+                    <div class="nf-next-sub">${escapeHtml(next ? next.sub : '')}</div>
                 </div>`;
             if (isFree) {
                 body += `<div class="nf-free-timeline-hint">
                     <span class="nf-timeline-hint-ico" aria-hidden="true">✨</span>
-                    <p>Upgrade to Pro to see your optimized coffee, meal, and light times.</p>
+                    <p>${escapeHtml(t('freeTimeline'))}</p>
                 </div>`;
             } else if (!paidPro) {
-                body += `<p class="nf-trial-hint">You’re on a Pro trial. Subscribe with Stars in Settings to keep Pro after the trial.</p>`;
+                body += `<p class="nf-trial-hint">${escapeHtml(t('trialHint'))}</p>`;
             }
 
             if (rotating && hasProEntitlement()) {
                 body += `
                     <div class="nf-card nf-transition-card">
-                        <div class="nf-card-label">Transition</div>
-                        <div style="font-weight:600;">🔄 NIGHT → DAY in 2 days</div>
-                        <button type="button" class="nf-cta nf-btn" id="btn-dash-trans">VIEW TRANSITION</button>
+                        <div class="nf-card-label">${escapeHtml(t('transKicker'))}</div>
+                        <div style="font-weight:600;">🔄 ${escapeHtml(t('dashTransStub'))}</div>
+                        <button type="button" class="nf-cta nf-btn" id="btn-dash-trans">${escapeHtml(t('transView'))}</button>
                     </div>`;
             }
 
             if (showReport) {
                 body += `
-                    <div class="nf-card nf-eos-prompt" role="region" aria-label="End of shift check-in">
+                    <div class="nf-card nf-eos-prompt" role="region" aria-label="${escapeHtml(t('eosTitle'))}">
                         <div class="nf-eos-prompt__row">
                             <div class="nf-eos-prompt__icon" aria-hidden="true">🌙</div>
                             <div class="nf-eos-prompt__copy">
-                                <p class="nf-eos-prompt__kicker">End of shift</p>
-                                <p class="nf-eos-prompt__title">Quick check-in for today</p>
-                                <p class="nf-eos-prompt__sub">A few taps update your <strong>weekly report</strong> and trends.</p>
+                                <p class="nf-eos-prompt__kicker">${escapeHtml(t('eosKicker'))}</p>
+                                <p class="nf-eos-prompt__title">${escapeHtml(t('eosTitle'))}</p>
+                                <p class="nf-eos-prompt__sub">${escapeHtml(t('eosSub'))}</p>
                             </div>
                         </div>
-                        <button type="button" class="nf-cta" id="btn-dash-report">Start check-in</button>
-                        <button type="button" class="nf-eos-skip" id="btn-dash-report-ignore">Skip for today</button>
+                        <button type="button" class="nf-cta" id="btn-dash-report">${escapeHtml(t('eosCta'))}</button>
+                        <button type="button" class="nf-eos-skip" id="btn-dash-report-ignore">${escapeHtml(t('eosSkip'))}</button>
                     </div>`;
             }
         }
@@ -2004,7 +2027,7 @@
                     days = [s];
                 } else {
                     $root.innerHTML = `<div class="nf-screen nf-screen--tabbed"><div class="nf-tabbar-body">
-                    ${topbarMainTabPage('Schedule')}
+                    ${topbarMainTabPage(t('schedPage'))}
                     <p class="nf-muted" style="padding:0 4px 12px;">No events for this view.</p>
                 </div>${getMainTabBarHtml()}</div>`;
                     bindMainTabBar();
@@ -2044,7 +2067,7 @@
             $root.innerHTML = `
             <div class="nf-screen nf-screen--tabbed">
                 <div class="nf-tabbar-body">
-                ${topbarMainTabPage('Schedule')}
+                ${topbarMainTabPage(t('schedPage'))}
                 ${rangeBlock}
                 <div class="nf-full-days">${dayBlocks}</div>
                 ${foot}
@@ -2122,7 +2145,7 @@
             $root.innerHTML = `
                 <div class="nf-screen nf-sug-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
-                    ${topbarMainTabPage('Ideas')}
+                    ${topbarMainTabPage(t('ideasPage'))}
                     <p class="nf-sug-lead">Select one or more ideas, then apply in one go. Ignored items stay hidden.</p>
                     ${sugRows}
                     ${
@@ -2286,43 +2309,45 @@
             const hMeal = habits.avg_meal_adherence_pct | 0;
             const sl = w.sleepPct | 0;
             const dLog = (eb.days_logged | 0) || 0;
-            const dLogLabel = dLog === 1 ? 'day' : 'days';
+            const dLogLabel = dLog === 1 ? t('wkD1') : t('wkDN');
             $root.innerHTML = `
                 <div class="nf-screen nf-week-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
-                    ${topbarMainTabPage('Week')}
+                    ${topbarMainTabPage(t('weekTitle'))}
                     <div class="nf-card nf-week-header-card">
-                        <p class="nf-week-kicker">Weekly report</p>
-                        <p class="nf-week-lead">How your shifts, habits, and energy lined up</p>
+                        <p class="nf-week-kicker">${escapeHtml(t('wkKicker'))}</p>
+                        <p class="nf-week-lead">${escapeHtml(t('wkRLead'))}</p>
                         <div class="nf-week-date-pill" role="text">
                             <span class="nf-week-range-ico" aria-hidden="true">📅</span>
                             <span class="nf-week-date-pill-txt">${escapeHtml(w.range || '')}</span>
                         </div>
                         ${weekTrendLabel(w.energy_trend)}
                     </div>
-                    <section class="nf-week-block nf-week-block--mood" aria-label="Mood and energy">
-                        <h2 class="nf-week-block-title">Mood &amp; energy</h2>
-                        <p class="nf-week-block-desc">End-of-shift check-ins, combined for the week</p>
+                    <section class="nf-week-block nf-week-block--mood" aria-label="${escapeHtml(t('wkMoodH'))}">
+                        <h2 class="nf-week-block-title">${escapeHtml(t('wkMoodH'))}</h2>
+                        <p class="nf-week-block-desc">${escapeHtml(t('wkMoodB'))}</p>
                     <div class="nf-card nf-week-hero nf-week-mood-card">
                         <div class="nf-week-hero-row">
                             <div class="nf-donut nf-donut--mood" style="background:${moodBg};" role="img" aria-label="Energy distribution for the week">
                                 <div class="nf-donut-hole"></div>
                             </div>
                             <div class="nf-week-hero-copy">
-                                <p class="nf-week-hero-stat"><span class="nf-week-hero-stat-n">${dLog}</span> ${dLogLabel} with energy check-ins</p>
-                                <ul class="nf-legend" aria-label="Energy distribution">
-                                    <li><span class="nf-legend-swatch" style="background:#5c6bc0"></span> Drained</li>
-                                    <li><span class="nf-legend-swatch" style="background:#90a4ae"></span> Low</li>
-                                    <li><span class="nf-legend-swatch" style="background:#26a69a"></span> OK</li>
-                                    <li><span class="nf-legend-swatch" style="background:#ffca28"></span> Great</li>
+                                <p class="nf-week-hero-stat"><span class="nf-week-hero-stat-n">${dLog}</span> ${dLogLabel} ${escapeHtml(
+                t('wkDLog')
+            )}</p>
+                                <ul class="nf-legend" aria-label="${escapeHtml(t('wkMoodH'))}">
+                                    <li><span class="nf-legend-swatch" style="background:#5c6bc0"></span> ${escapeHtml(t('wkLegD'))}</li>
+                                    <li><span class="nf-legend-swatch" style="background:#90a4ae"></span> ${escapeHtml(t('wkLegL'))}</li>
+                                    <li><span class="nf-legend-swatch" style="background:#26a69a"></span> ${escapeHtml(t('wkLegO'))}</li>
+                                    <li><span class="nf-legend-swatch" style="background:#ffca28"></span> ${escapeHtml(t('wkLegG'))}</li>
                                 </ul>
                             </div>
                         </div>
                     </div>
                     </section>
                     <div class="nf-card nf-week-daily-wrap">
-                        <p class="nf-week-section-h">Day by day</p>
-                        <p class="nf-week-section-sub">Energy at end of shift — Mon through Sun</p>
+                        <p class="nf-week-section-h">${escapeHtml(t('wkByDay'))}</p>
+                        <p class="nf-week-section-sub">${escapeHtml(t('wkByDayB'))}</p>
                         <div class="nf-week-energy">
                         ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                             .map(
@@ -2336,41 +2361,47 @@
                             .join('')}
                         </div>
                     </div>
-                    <section class="nf-week-block" aria-label="Habits">
-                        <h2 class="nf-week-block-title">Habits</h2>
-                        <p class="nf-week-block-desc">Averages for scheduled coffee, meals, and sleep quality</p>
+                    <section class="nf-week-block" aria-label="${escapeHtml(t('wkHab2'))}">
+                        <h2 class="nf-week-block-title">${escapeHtml(t('wkHab2'))}</h2>
+                        <p class="nf-week-block-desc">${escapeHtml(t('wkHab2B'))}</p>
                         <div class="nf-week-snap-grid">
                         <div class="nf-week-snap-tile">
                             <span class="nf-week-snap-ico" aria-hidden="true">☕</span>
-                            <p class="nf-week-snap-kicker">Coffee</p>
-                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--coffee-ring" style="--p:${hCoffee}%;" role="img" aria-label="Coffee adherence ${hCoffee} percent">
+                            <p class="nf-week-snap-kicker">${escapeHtml(t('wkCoff2'))}</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--coffee-ring" style="--p:${hCoffee}%;" role="img" aria-label="${escapeHtml(
+                t('wkCoff2')
+            )} ${hCoffee}%">
                                 <span class="nf-donut-pct nf-donut-pct--snap">${hCoffee}%</span>
                             </div>
-                            <p class="nf-week-snap-hint">avg adherence</p>
+                            <p class="nf-week-snap-hint">${escapeHtml(t('wkAdh'))}</p>
                         </div>
                         <div class="nf-week-snap-tile">
                             <span class="nf-week-snap-ico" aria-hidden="true">🍽</span>
-                            <p class="nf-week-snap-kicker">Meals</p>
-                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--meal-ring" style="--p:${hMeal}%;" role="img" aria-label="Meal adherence ${hMeal} percent">
+                            <p class="nf-week-snap-kicker">${escapeHtml(t('wkMeal2'))}</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--meal-ring" style="--p:${hMeal}%;" role="img" aria-label="${escapeHtml(
+                t('wkMeal2')
+            )} ${hMeal}%">
                                 <span class="nf-donut-pct nf-donut-pct--snap">${hMeal}%</span>
                             </div>
-                            <p class="nf-week-snap-hint">avg adherence</p>
+                            <p class="nf-week-snap-hint">${escapeHtml(t('wkAdh'))}</p>
                         </div>
                         <div class="nf-week-snap-tile">
                             <span class="nf-week-snap-ico" aria-hidden="true">🌙</span>
-                            <p class="nf-week-snap-kicker">Sleep</p>
-                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--sleep-ring" style="--p:${sl}%;" role="img" aria-label="Average sleep quality ${sl} percent">
+                            <p class="nf-week-snap-kicker">${escapeHtml(t('wkSl2'))}</p>
+                            <div class="nf-donut nf-donut--ring nf-donut--snap nf-donut--sleep-ring" style="--p:${sl}%;" role="img" aria-label="${escapeHtml(
+                t('wkSl2')
+            )} ${sl}%">
                                 <span class="nf-donut-pct nf-donut-pct--snap">${sl}%</span>
                             </div>
-                            <p class="nf-week-snap-hint">avg from logs</p>
+                            <p class="nf-week-snap-hint">${escapeHtml(t('wkFrLog'))}</p>
                         </div>
                     </div>
                     </section>
                     <div class="nf-card nf-week-bars">
-                        <p class="nf-week-section-h">By time slot</p>
-                        <p class="nf-week-section-sub">Adherence to each scheduled reminder time</p>
+                        <p class="nf-week-section-h">${escapeHtml(t('wkBySlot2'))}</p>
+                        <p class="nf-week-section-sub">${escapeHtml(t('wkBySlot2B'))}</p>
                         <div class="nf-week-bars-block nf-week-bars-block--coffee">
-                            <p class="nf-week-bars-block-title">☕ Coffee</p>
+                            <p class="nf-week-bars-block-title">☕ ${escapeHtml(t('wkCoff2'))}</p>
                     ${(w.coffee || [])
                         .map(
                             (c) => `
@@ -2383,12 +2414,12 @@
                         .join('')}
                         ${
                             !(w.coffee && w.coffee.length)
-                                ? '<p class="nf-muted tiny nf-week-empty">No data this week</p>'
+                                ? `<p class="nf-muted tiny nf-week-empty">${escapeHtml(t('wkNoBar'))}</p>`
                                 : ''
                         }
                         </div>
                         <div class="nf-week-bars-block nf-week-bars-block--meals">
-                            <p class="nf-week-bars-block-title">🍽 Meals</p>
+                            <p class="nf-week-bars-block-title">🍽 ${escapeHtml(t('wkMeal2'))}</p>
                     ${(w.meals || [])
                         .map(
                             (c) => `
@@ -2401,7 +2432,7 @@
                         .join('')}
                         ${
                             !(w.meals && w.meals.length)
-                                ? '<p class="nf-muted tiny nf-week-empty">No data this week</p>'
+                                ? `<p class="nf-muted tiny nf-week-empty">${escapeHtml(t('wkNoBar'))}</p>`
                                 : ''
                         }
                         </div>
@@ -2409,13 +2440,13 @@
                     ${
                         hasData
                             ? ''
-                            : '<p class="nf-week-nudge nf-muted">Log end-of-shift check-ins to fill this report and track week over week.</p>'
+                            : `<p class="nf-week-nudge nf-muted">${escapeHtml(t('wkNudge2'))}</p>`
                     }
                     ${
                         wellness.length
                             ? `<div class="nf-card nf-week-wellness">
-                        <p class="nf-week-wellness-title">Gentle tips for this week</p>
-                        <p class="nf-week-wellness-lead">From your saved coffee, meal, and light times — suggestions, not rules. Transition days stay in <strong>Full schedule</strong>.</p>
+                        <p class="nf-week-wellness-title">${escapeHtml(t('wkWTitle'))}</p>
+                        <p class="nf-week-wellness-lead">${escapeHtml(t('wkWLead'))}</p>
                         <ul class="nf-week-wellness-list">
                         ${wellness.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
                         </ul>
@@ -2525,7 +2556,7 @@
         $root.innerHTML = `
             <div class="nf-screen nf-screen--tabbed nf-free-settings">
                 <div class="nf-tabbar-body">
-                ${topbarMainTabPage('Settings')}
+                ${topbarMainTabPage(t('stTitle'))}
                 <p class="nf-free-settings-lead">Upgrade to Pro to customize your schedule.</p>
                 <div class="nf-card nf-free-readonly">
                     <h3 class="nf-free-h3">📅 Work &amp; sleep</h3>
@@ -2757,7 +2788,7 @@
         $root.innerHTML = `
             <div class="nf-screen nf-screen--tabbed">
                 <div class="nf-tabbar-body">
-                ${topbarMainTabPage('Settings')}
+                ${topbarMainTabPage(t('stTitle'))}
                 ${paidNotice}
                 ${trialPayBlock}
                 ${workSleepBlock}
@@ -3743,15 +3774,16 @@
             </div>`;
         };
 
-        const dateLong = d.toLocaleDateString(undefined, {
+        const dateLoc = { en: 'en-US', ru: 'ru-RU', uz: 'uz-UZ' }[getLocale()] || 'en-US';
+        const dateLong = d.toLocaleDateString(dateLoc, {
             weekday: 'long',
             month: 'long',
             day: 'numeric',
         });
 
         let body = '';
-        body += `<header class="nf-checkin-hero" aria-label="Check-in for today">
-            <h2 class="nf-checkin-hero__title">End of shift</h2>
+        body += `<header class="nf-checkin-hero" aria-label="${escapeHtml(t('chkinTitle'))}">
+            <h2 class="nf-checkin-hero__title">${escapeHtml(t('chkinHero'))}</h2>
             <p class="nf-checkin-hero__date"><span class="nf-checkin-hero__date-ico" aria-hidden="true">📅</span> ${escapeHtml(
                 dateLong
             )}</p>
@@ -3761,15 +3793,13 @@
             <div class="nf-checkin-step">
                 <span class="nf-checkin-step__num" aria-hidden="true">1</span>
                 <div class="nf-checkin-step__main">
-                    <h3 class="nf-checkin-step__h">How you feel</h3>
-                    <p class="nf-checkin-step__hint">1 = low · 4 = high — <span class="nf-checkin-nowrap">rough guess is fine</span></p>
-                    <p class="nf-checkin-legend" aria-label="Scale meaning">
-                        <span class="nf-checkin-legend__item">Energy: mood after this shift</span>
-                        <span class="nf-checkin-legend__sep" aria-hidden="true">·</span>
-                        <span class="nf-checkin-legend__item">Sleep: last main sleep, not a diagnosis</span>
+                    <h3 class="nf-checkin-step__h">${escapeHtml(t('chkinS1h'))}</h3>
+                    <p class="nf-checkin-step__hint">${escapeHtml(t('chkinS1x'))}</p>
+                    <p class="nf-checkin-legend" aria-label="">
+                        <span class="nf-checkin-legend__item">${escapeHtml(t('chkinLeg'))}</span>
                     </p>
-                    ${slider('energy', 'Energy right now', '😫 Drained', '⚡ Great')}
-                    ${slider('sleepq', 'Sleep quality (last rest)', '😫 Rough', '😊 Rested')}
+                    ${slider('energy', escapeHtml(t('chkinEnergyRow')), '😫', '⚡')}
+                    ${slider('sleepq', escapeHtml(t('chkinSleepRow')), '😫', '😊')}
                 </div>
             </div>
         </div>`;
@@ -3779,41 +3809,51 @@
             <div class="nf-checkin-step">
                 <span class="nf-checkin-step__num" aria-hidden="true">2</span>
                 <div class="nf-checkin-step__main">
-                    <h3 class="nf-checkin-step__h">Habits vs your plan</h3>
-                    <p class="nf-checkin-step__hint">1 = missed the window · 4 = on track</p>`;
+                    <h3 class="nf-checkin-step__h">${escapeHtml(t('chkinS2h'))}</h3>
+                    <p class="nf-checkin-step__hint">${escapeHtml(t('chkinS2x'))}</p>`;
             if (coffees.length) {
-                habitBlock += `<p class="nf-checkin-subh">☕ Coffee</p>`;
+                habitBlock += `<p class="nf-checkin-subh">☕ ${escapeHtml(t('chkinCof'))}</p>`;
                 coffees.forEach((c, i) => {
-                    const lab = escapeHtml(`Scheduled ${formatTime(c.time)}`);
-                    habitBlock += slider(`co-${i}`, lab, 'Missed', 'On track');
+                    const lab = escapeHtml(t('chkinPlanned', formatTime(c.time)));
+                    habitBlock += slider(
+                        `co-${i}`,
+                        lab,
+                        escapeHtml(t('chkinScaleL')),
+                        escapeHtml(t('chkinScaleR'))
+                    );
                 });
             }
             if (meals.length) {
-                habitBlock += `<p class="nf-checkin-subh nf-checkin-subh--meals">🍽 Meals</p>`;
+                habitBlock += `<p class="nf-checkin-subh nf-checkin-subh--meals">🍽 ${escapeHtml(t('chkinMeal'))}</p>`;
                 meals.forEach((m, i) => {
-                    const lab = escapeHtml(`Scheduled ${formatTime(m.time)}`);
-                    habitBlock += slider(`me-${i}`, lab, 'Missed', 'On track');
+                    const lab = escapeHtml(t('chkinPlanned', formatTime(m.time)));
+                    habitBlock += slider(
+                        `me-${i}`,
+                        lab,
+                        escapeHtml(t('chkinScaleL')),
+                        escapeHtml(t('chkinScaleR'))
+                    );
                 });
             }
             habitBlock += `</div></div></div>`;
             body += habitBlock;
         } else {
-            body += `<p class="nf-checkin-note nf-muted" role="note">No coffee or meal times in today’s plan — step 1 is enough. Add times in <strong>Settings</strong> or <strong>Full schedule</strong> when you’re ready.</p>`;
+            body += `<p class="nf-checkin-note nf-muted" role="note">${escapeHtml(t('chkinNoSlots'))}</p>`;
         }
 
         $root.innerHTML = `
             <div class="nf-screen nf-summary-screen">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="bsum">←</button>
-                    <h1>Check-in</h1>
+                    <h1>${escapeHtml(t('chkinTitle'))}</h1>
                     <span></span>
                 </div>
                 <div class="nf-summary-body nf-summary-body--checkin">
                 ${body}
                 </div>
                 <div class="nf-summary-actions">
-                    <button type="button" class="nf-cta" id="btn-save-sum">Save</button>
-                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more">Add detail (optional)</button>
+                    <button type="button" class="nf-cta" id="btn-save-sum">${escapeHtml(t('chkinSave'))}</button>
+                    <button type="button" class="nf-cta nf-cta-secondary" id="btn-tell-more">${escapeHtml(t('chkinDetail'))}</button>
                 </div>
             </div>`;
         $root.querySelectorAll('input.nf-range').forEach((el) => {
@@ -3837,17 +3877,18 @@
                 if (!res.ok) throw new Error('x');
             } catch (e) {
                 console.error(e);
-                tg.showAlert('Could not save summary.');
+                tg.showAlert(t('errSave'));
                 return;
             }
 
             setEosDoneToday();
-            tg.showAlert('Saved.');
+            tg.showAlert(t('msgSaved'));
             back();
         };
     }
 
     function render() {
+        syncDocumentLang();
         if (state.clockTimer) clearInterval(state.clockTimer);
         switch (state.screen) {
             case 'loading':
@@ -3902,6 +3943,7 @@
             if (ur.ok) {
                 state.userRow = await ur.json();
                 applyUserSettingsFromUserRow(state.userRow);
+                syncDocumentLang();
             }
         } catch (e) {
             console.warn(e);

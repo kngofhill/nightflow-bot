@@ -55,10 +55,24 @@ def patch_me():
         return jsonify({"error": "User not found"}), 404
 
     row = user.data[0]
+
+    if set(data.keys()) == {"ui_language"}:
+        ul = data.get("ui_language")
+        if ul not in ("en", "ru", "uz"):
+            return jsonify({"error": "ui_language must be en, ru, or uz"}), 400
+        supabase_client.table("users").update({"ui_language": ul}).eq("id", user_id).execute()
+        refreshed = supabase_client.table("users").select("*").eq("id", user_id).execute()
+        return jsonify(_public_user_row(refreshed.data[0]))
+
     if not has_pro_entitlement(row):
         return jsonify({"error": "Nightflow Pro or active trial required to change settings", "code": "pro_required"}), 403
 
     updates = {}
+
+    if "ui_language" in data:
+        ul = data.get("ui_language")
+        if ul in ("en", "ru", "uz"):
+            updates["ui_language"] = ul
 
     if "timezone" in data:
         tz = data.get("timezone")

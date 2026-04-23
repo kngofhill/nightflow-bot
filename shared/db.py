@@ -96,6 +96,18 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
+def set_user_ui_language(telegram_id: int, lang: str) -> bool:
+    """Persists app/bot language. ``lang`` must be en, ru, or uz."""
+    if lang not in ("en", "ru", "uz"):
+        return False
+    try:
+        supabase_client.table("users").update({"ui_language": lang}).eq("telegram_id", telegram_id).execute()
+        return True
+    except Exception as e:
+        logger.error("set_user_ui_language: %s", e)
+        return False
+
+
 def upsert_user(telegram_id: int, username: str, first_name: str, shift_type: Optional[str] = None):
     """Insert or update user by telegram_id. Preserves trial / subscription fields on update.
     If ``shift_type`` is omitted (None), existing ``shift_type`` is not changed on update.
