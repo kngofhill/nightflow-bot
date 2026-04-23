@@ -58,7 +58,7 @@
         stack: [],
         schedule: null,
         userRow: null,
-        onboardingType: 'constant',
+        onboardingType: 'rotating',
         clockTimer: null,
         summary: {},
         settings: {
@@ -879,7 +879,7 @@
     }
 
     function renderOnboarding() {
-        const type = state.onboardingType || 'constant';
+        const type = state.onboardingType || 'rotating';
         const topFromSettings = state.onboardingFromSettings
             ? `<div class="nf-topbar" style="margin:0 0 12px;">
                 <button type="button" class="nf-back" id="onb-back">← Back</button>
@@ -900,16 +900,6 @@
                 <div class="nf-select-card nf-onb-card" role="radiogroup" aria-label="Schedule type">
                     <div class="nf-onb-choices">
                         <label class="nf-choice-tile">
-                            <input type="radio" name="stype" value="constant" ${
-                                type === 'constant' ? 'checked' : ''
-                            } />
-                            <span class="nf-choice-ico" aria-hidden="true">⏱</span>
-                            <div class="nf-choice-text">
-                                <span class="nf-choice-title">Permanent</span>
-                                <span class="nf-choice-sub">Fixed hours every shift</span>
-                            </div>
-                        </label>
-                        <label class="nf-choice-tile">
                             <input type="radio" name="stype" value="rotating" ${
                                 type === 'rotating' ? 'checked' : ''
                             } />
@@ -917,6 +907,16 @@
                             <div class="nf-choice-text">
                                 <span class="nf-choice-title">Rotating</span>
                                 <span class="nf-choice-sub">2-2-3, blocks, or 4-4-4-4</span>
+                            </div>
+                        </label>
+                        <label class="nf-choice-tile">
+                            <input type="radio" name="stype" value="constant" ${
+                                type === 'constant' ? 'checked' : ''
+                            } />
+                            <span class="nf-choice-ico" aria-hidden="true">⏱</span>
+                            <div class="nf-choice-text">
+                                <span class="nf-choice-title">Permanent</span>
+                                <span class="nf-choice-sub">Fixed hours every shift</span>
                             </div>
                         </label>
                     </div>
@@ -933,7 +933,7 @@
         }
         document.getElementById('btn-onb-continue').onclick = () => {
             const r = document.querySelector('input[name="stype"]:checked');
-            state.onboardingType = r ? r.value : 'constant';
+            state.onboardingType = r ? r.value : 'rotating';
             const fromSet = state.onboardingFromSettings;
             state.onboardingFromSettings = false;
             go(state.onboardingType === 'constant' ? 'setup_perm' : 'setup_rot', fromSet);
@@ -943,27 +943,60 @@
     function renderSetupPermanent() {
         const hint = state.finishingConstantSetup
             ? `<p class="nf-onb-hint">You’re switching to a <strong>fixed</strong> schedule. Set the hours you keep every shift — we’ll rebuild your reminders.</p>`
-            : '';
+            : `<div class="nf-setup-perm-hero">
+                    <div class="nf-setup-perm-hero-ico" aria-hidden="true">⏱</div>
+                    <div class="nf-setup-perm-hero-copy">
+                        <h2 class="nf-setup-perm-hero-title">Fixed weekly hours</h2>
+                        <p class="nf-setup-perm-hero-sub">Same work and sleep window every day. You can fine-tune coffee, meals, and light in settings after this.</p>
+                    </div>
+                </div>`;
         $root.innerHTML = `
-            <div class="nf-screen">
+            <div class="nf-screen nf-setup-perm">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="btn-sp-back">← Back</button>
                     <h1>Permanent schedule</h1>
                     <span class="nf-clock">${escapeHtml(nowClockStr())}</span>
                 </div>
                 ${hint}
-                <p class="nf-title">Work hours</p>
-                <div class="nf-card">
-                    <div class="nf-row"><span>Start</span>${selectTimeHtml('work_start', '22:00', 'ws')}</div>
-                    <div class="nf-row" style="margin-top:10px;"><span>End</span>${selectTimeHtml('work_end', '06:00', 'we')}</div>
-                </div>
-                <p class="nf-title">Sleep hours</p>
-                <div class="nf-card">
-                    <div class="nf-row"><span>Start</span>${selectTimeHtml('sleep_start', '08:00', 'ss')}</div>
-                    <div class="nf-row" style="margin-top:10px;"><span>End</span>${selectTimeHtml('sleep_end', '16:00', 'se')}</div>
+                <p class="nf-field-label nf-field-label--loose">Shift &amp; sleep</p>
+                <p class="nf-muted nf-rot-pick-hint" style="margin-top:0;">These times repeat every week. We validate that work and sleep don’t overlap on the same calendar day.</p>
+                <div class="nf-rot-tpl-stack nf-setup-perm-stack">
+                    <div class="nf-rot-tpl-card nf-rot-tpl-card--night">
+                        <div class="nf-rot-tpl-card__head">Work</div>
+                        <p class="nf-rot-tpl-card__note">When your shift runs — night or day, as long as it’s consistent.</p>
+                        <div class="nf-rot-tpl-in">
+                            <div class="nf-row"><span class="nf-rot-tpl-lab">Start</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                'Work start',
+                                '22:00',
+                                'ws'
+                            )}</span></div>
+                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">End</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                'Work end',
+                                '06:00',
+                                'we'
+                            )}</span></div>
+                        </div>
+                    </div>
+                    <div class="nf-rot-tpl-card nf-rot-tpl-card--perm-sleep">
+                        <div class="nf-rot-tpl-card__head">Sleep</div>
+                        <p class="nf-rot-tpl-card__note">Main sleep block between shifts — should not overlap your work times above.</p>
+                        <div class="nf-rot-tpl-in">
+                            <div class="nf-row"><span class="nf-rot-tpl-lab">Start</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                'Sleep start',
+                                '08:00',
+                                'ss'
+                            )}</span></div>
+                            <div class="nf-row" style="margin-top:10px;"><span class="nf-rot-tpl-lab">End</span><span class="nf-rot-tpl-pair">${selectTimeHtml(
+                                'Sleep end',
+                                '16:00',
+                                'se'
+                            )}</span></div>
+                        </div>
+                    </div>
                 </div>
                 <p class="nf-hint-validate">Work and sleep are checked so they can’t overlap on the same day.</p>
                 <button type="button" class="nf-cta" id="btn-create-const">Create schedule</button>
+                <p class="nf-sub nf-center" style="margin-top:4px;">Saves to your account. You can edit this anytime in settings.</p>
             </div>`;
         document.getElementById('btn-sp-back').onclick = () => {
             state.finishingConstantSetup = false;
@@ -1351,6 +1384,18 @@
             return '<div class="nf-trend nf-trend--mid"><span class="nf-trend-ico">→</span> Energy: stable across the week</div>';
         }
         return '';
+    }
+
+    /** CSS tone class for weekly energy cell (emoji or placeholder). */
+    function energyDayClass(emo) {
+        if (emo == null) return 'nf-week-day--empty';
+        const s = String(emo).trim();
+        if (!s || s === '—') return 'nf-week-day--empty';
+        if (/[😴💤🥱]/.test(s) || s.toLowerCase().includes('drain')) return 'nf-week-day--drained';
+        if (/[😐😑😕🙁😟]/.test(s) || s.toLowerCase() === 'low') return 'nf-week-day--low';
+        if (/[😊🙂😌]/.test(s) || s.toLowerCase() === 'ok') return 'nf-week-day--ok';
+        if (/[⚡🚀💪🔥🤩😁]/.test(s) || s.toLowerCase() === 'great') return 'nf-week-day--great';
+        return 'nf-week-day--ok';
     }
 
     function mockTransition() {
@@ -1923,20 +1968,25 @@
             $root.innerHTML = `
                 <div class="nf-screen nf-week-screen">
                     <div class="nf-topbar">
-                        <button type="button" class="nf-back" id="bw">← BACK</button>
-                        <h1>Weekly Report</h1>
+                        <button type="button" class="nf-back" id="bw">← Back</button>
+                        <h1>Weekly</h1>
                         <span></span>
                     </div>
-                    <div class="nf-week-head">📅 ${escapeHtml(w.range || '')}</div>
+                    <div class="nf-week-intro">
+                        <p class="nf-week-kicker">This week</p>
+                        <p class="nf-week-range"><span class="nf-week-range-ico" aria-hidden="true">📅</span> ${escapeHtml(
+                            w.range || ''
+                        )}</p>
+                    </div>
                     ${weekTrendLabel(w.energy_trend)}
-                    <div class="nf-card nf-week-hero">
+                    <div class="nf-card nf-week-hero nf-week-mood-card">
                         <div class="nf-week-hero-row">
                             <div class="nf-donut nf-donut--mood" style="background:${moodBg};">
                                 <div class="nf-donut-hole"></div>
                             </div>
                             <div class="nf-week-hero-copy">
-                                <p class="nf-week-hero-title">Mood mix (logged days)</p>
-                                <p class="nf-muted nf-week-hero-sub">${dLog} ${dLogLabel} with energy logs</p>
+                                <p class="nf-week-hero-title">Mood mix</p>
+                                <p class="nf-muted nf-week-hero-sub">${dLog} ${dLogLabel} with energy check-ins</p>
                                 <ul class="nf-legend" aria-label="Energy distribution">
                                     <li><span class="nf-legend-swatch" style="background:#5c6bc0"></span> Drained</li>
                                     <li><span class="nf-legend-swatch" style="background:#90a4ae"></span> Low</li>
@@ -1946,13 +1996,16 @@
                             </div>
                         </div>
                     </div>
-                    <div class="nf-card" style="margin-bottom:12px;">
-                        <p class="nf-meter-label" style="margin-top:0;">Daily energy</p>
+                    <div class="nf-card nf-week-daily-wrap">
+                        <p class="nf-week-section-h">Day by day</p>
+                        <p class="nf-week-section-sub">End-of-shift energy, Mon → Sun</p>
                         <div class="nf-week-energy">
                         ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                             .map(
                                 (d, i) =>
-                                    `<div class="nf-week-day"><span class="nf-week-dow">${d}</span><span class="nf-week-emo" title="${d}">${
+                                    `<div class="nf-week-day ${energyDayClass(
+                                        w.energy ? w.energy[i] : '—'
+                                    )}"><span class="nf-week-dow">${d}</span><span class="nf-week-emo" title="${d}">${
                                         w.energy?.[i] || '—'
                                     }</span></div>`
                             )
@@ -1961,41 +2014,61 @@
                     </div>
                     <div class="nf-week-habits">
                         <div class="nf-card nf-week-donut-card">
-                            <p class="nf-meter-label" style="margin-top:0;">Coffee (avg)</p>
+                            <p class="nf-week-metric-title">☕ Coffee</p>
+                            <p class="nf-week-metric-sub">Avg adherence on scheduled times</p>
                             <div class="nf-donut nf-donut--ring" style="--p:${hCoffee};"><span class="nf-donut-pct">${hCoffee}%</span></div>
-                            <p class="nf-muted tiny" style="text-align:center;">Adherence on scheduled coffee times</p>
                         </div>
                         <div class="nf-card nf-week-donut-card">
-                            <p class="nf-meter-label" style="margin-top:0;">Meals (avg)</p>
+                            <p class="nf-week-metric-title">🍽 Meals</p>
+                            <p class="nf-week-metric-sub">Avg adherence on scheduled times</p>
                             <div class="nf-donut nf-donut--ring" style="--p:${hMeal};"><span class="nf-donut-pct">${hMeal}%</span></div>
-                            <p class="nf-muted tiny" style="text-align:center;">Adherence on scheduled meal times</p>
                         </div>
                     </div>
-                    <p class="nf-meter-label">Per-slot coffee</p>
+                    <div class="nf-card nf-week-bars">
+                        <p class="nf-week-section-h">By time slot</p>
+                        <p class="nf-week-section-sub">Adherence to each scheduled time</p>
+                        <div class="nf-week-bars-block">
+                            <p class="nf-week-bars-block-title">☕ Coffee</p>
                     ${(w.coffee || [])
                         .map(
                             (c) => `
                     <div class="nf-meter-row">
-                        <div class="tiny">${escapeHtml(c.label)}</div>
+                        <div class="nf-week-slot-lab">${escapeHtml(c.label)}</div>
                         <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
-                        <div class="tiny">${c.pct}%</div>
+                        <div class="nf-week-slot-pct">${c.pct}%</div>
                     </div>`
                         )
                         .join('')}
-                    <p class="nf-meter-label">Per-slot meals</p>
+                        ${
+                            !(w.coffee && w.coffee.length)
+                                ? '<p class="nf-muted tiny nf-week-empty">No data this week</p>'
+                                : ''
+                        }
+                        </div>
+                        <div class="nf-week-bars-block nf-week-bars-block--meals">
+                            <p class="nf-week-bars-block-title">🍽 Meals</p>
                     ${(w.meals || [])
                         .map(
                             (c) => `
                     <div class="nf-meter-row">
-                        <div class="tiny">${escapeHtml(c.label)}</div>
+                        <div class="nf-week-slot-lab">${escapeHtml(c.label)}</div>
                         <div class="nf-meter"><div class="nf-meter-fill" style="width:${c.pct}%"></div></div>
-                        <div class="tiny">${c.pct}%</div>
+                        <div class="nf-week-slot-pct">${c.pct}%</div>
                     </div>`
                         )
                         .join('')}
-                    <p class="nf-meter-label">Sleep quality (avg)</p>
-                    <div class="nf-donut nf-donut--ring nf-donut--wide" style="--p:${sl};"><span class="nf-donut-pct">${sl}%</span></div>
-                    <p class="nf-muted tiny" style="text-align:center;margin:0 0 8px;">From end-of-shift check-ins</p>
+                        ${
+                            !(w.meals && w.meals.length)
+                                ? '<p class="nf-muted tiny nf-week-empty">No data this week</p>'
+                                : ''
+                        }
+                        </div>
+                    </div>
+                    <div class="nf-card nf-week-sleep-card">
+                        <p class="nf-week-metric-title">Sleep quality (avg)</p>
+                        <p class="nf-week-metric-sub">From end-of-shift check-ins</p>
+                    <div class="nf-donut nf-donut--ring nf-donut--wide" style="--p:${sl}; margin-left:auto;margin-right:auto;"><span class="nf-donut-pct">${sl}%</span></div>
+                    </div>
                     ${
                         hasData
                             ? ''
