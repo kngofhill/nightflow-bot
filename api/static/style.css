@@ -1985,28 +1985,51 @@ input[type="date"]:focus {
     font-size: 0.9rem;
 }
 
-/* Paid Pro — dashboard */
-.nf-pro-active-banner {
-    margin: 0 0 14px;
-    padding: 12px 14px;
-    border-radius: var(--nf-radius);
-    border: 1px solid var(--tg-theme-hint-color, var(--nf-border));
-    background: var(--tg-theme-secondary-bg-color, var(--nf-card));
-    text-align: center;
+/* Paid Pro — Settings (compact) */
+.nf-pro-status-compact {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(64, 167, 227, 0.35);
+    background: var(--nf-primary-dim, rgba(64, 167, 227, 0.08));
 }
 
-.nf-pro-active-title {
-    font-size: 0.68rem;
+.nf-pro-status-ico {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
     font-weight: 800;
-    letter-spacing: 0.1em;
-    color: var(--tg-theme-button-color, var(--nf-primary));
-    margin: 0 0 4px;
+    border-radius: 50%;
+    background: var(--nf-primary, #40a7e3);
+    color: #fff;
+    line-height: 1;
 }
 
-.nf-pro-active-sub {
-    margin: 0;
-    font-size: 0.86rem;
-    line-height: 1.4;
+.nf-pro-status-txt {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    line-height: 1.25;
+}
+
+.nf-pro-status-title {
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--nf-primary, #5ab4ea);
+}
+
+.nf-pro-status-sub {
+    font-size: 0.8rem;
     color: var(--tg-theme-hint-color, var(--nf-muted));
 }
 
@@ -2017,11 +2040,6 @@ input[type="date"]:focus {
     margin: 0 0 8px;
     padding: 0 4px;
     text-align: center;
-}
-
-.nf-billing-top {
-    text-align: left;
-    padding: 0 2px 8px;
 }
 
 .nf-card-cta {

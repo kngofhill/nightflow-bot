@@ -790,13 +790,14 @@
         return !!(state.userRow && state.userRow.active_paid_pro);
     }
 
+    /** Pro period end for UI (date only, no time of day). */
     function formatProExpiresUser() {
         const s = state.userRow && state.userRow.pro_expires_at;
         if (!s) return '';
         try {
             const d = new Date(s);
             if (Number.isNaN(d.getTime())) return '';
-            return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         } catch (e) {
             return '';
         }
@@ -1758,14 +1759,7 @@
             const paidPro = hasActivePaidPro();
             // TESTING ONLY — revert ?? fallback to 50 before production
             const stars = state.userRow?.pro_price_stars ?? 1;
-            if (paidPro) {
-                body += `<div class="nf-pro-active-banner" role="status">
-                    <div class="nf-pro-active-title">Pro active</div>
-                    <p class="nf-pro-active-sub">Paid through ${escapeHtml(
-                        formatProExpiresUser() || '—'
-                    )}</p>
-                </div>`;
-            } else if (isFree) {
+            if (!paidPro && isFree) {
                 body += `<div class="nf-upgrade-hero" role="region" aria-label="Upgrade to Pro">
                     <div class="nf-upgrade-hero-title">Nightflow Pro</div>
                     <p class="nf-upgrade-hero-text">Get notifications, full schedule, weekly insights, and more.</p>
@@ -2557,9 +2551,15 @@
         const paidPro = hasActivePaidPro();
         const stars = state.userRow?.pro_price_stars ?? 1;
         const paidNotice = paidPro
-            ? `<p class="nf-billing-notice nf-billing-top">Pro (paid) through <strong>${escapeHtml(
-                  formatProExpiresUser() || '—'
-              )}</strong></p>`
+            ? `<div class="nf-pro-status-compact" role="status">
+                    <span class="nf-pro-status-ico" aria-hidden="true">✓</span>
+                    <div class="nf-pro-status-txt">
+                        <span class="nf-pro-status-title">Pro active</span>
+                        <span class="nf-pro-status-sub">Active until <strong>${escapeHtml(
+                            formatProExpiresUser() || '—'
+                        )}</strong></span>
+                    </div>
+                </div>`
             : '';
         const trialPayBlock =
             hasProEntitlement() && !paidPro
