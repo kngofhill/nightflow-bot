@@ -36,9 +36,10 @@ from shared.db import (
 )
 from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
 from shared.bot_menu import (
-    REPLY_BTN_CANCEL,
-    REPLY_BTN_REFUND,
-    REPLY_BTN_SUBSCRIBE,
+    BOT_COMMANDS_HELP,
+    REPLY_BTN_COMMANDS,
+    REPLY_BTN_PROFILE,
+    format_telegram_profile,
     reply_main_menu_keyboard,
     reply_menu_text_filter,
     webapp_url,
@@ -203,6 +204,18 @@ async def deliver_resume(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
     await context.bot.send_message(chat_id, "Resumed.")
 
 
+async def deliver_profile(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
+    row = get_user_by_telegram_id(user_id)
+    text = format_telegram_profile(row)
+    await context.bot.send_message(chat_id, text, parse_mode="HTML")
+
+
+async def deliver_commands_help(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> None:
+    await context.bot.send_message(chat_id, BOT_COMMANDS_HELP, parse_mode="HTML")
+
+
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Legacy inline ``menu:*`` buttons on old messages; reply keyboard is primary."""
     q = update.callback_query
@@ -227,18 +240,22 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bottom reply keyboard (Subscribe / Cancel / Refund). Mini App opens via web_app, no text."""
+    """Profile & Commands. Mini App and Support use web_app / URL (no chat text)."""
     if not update.message or not update.message.text:
         return
     text = update.message.text.strip()
     chat_id = update.effective_chat.id
     uid = update.effective_user.id
-    if text == REPLY_BTN_SUBSCRIBE:
-        await deliver_subscribe(context, chat_id, uid)
-    elif text == REPLY_BTN_CANCEL:
-        await deliver_cancel(context, chat_id, uid)
-    elif text == REPLY_BTN_REFUND:
-        await deliver_refund(context, chat_id, uid)
+    if text == REPLY_BTN_PROFILE:
+        await deliver_profile(context, chat_id, uid)
+    elif text == REPLY_BTN_COMMANDS:
+        await deliver_commands_help(context, chat_id)
+
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await deliver_profile(
+        context, update.effective_chat.id, update.effective_user.id
+    )
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -749,6 +766,7 @@ def main():
     application.add_handler(
         CommandHandler(["lang", "language", "setlang"], cmd_lang)
     )
+    application.add_handler(CommandHandler("profile", cmd_profile))
     application.add_handler(MessageHandler(reply_menu_text_filter(), on_reply_menu_button))
     application.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
