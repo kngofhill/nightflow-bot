@@ -11,6 +11,17 @@ from typing import Any, Dict, List, Optional, Tuple
 from shared.schedule_utils import str_to_time, time_to_str, safe_json_parse
 
 HABITS_EFFECTIVE_KEY = "habits_effective_from"
+HABITS_EFFECTIVE_SHIFT_KEY = "habits_effective_shift_type"
+
+
+def _prefs_as_dict(prefs: Any) -> dict:
+    if prefs is None:
+        return {}
+    if isinstance(prefs, str):
+        return safe_json_parse(prefs) or {}
+    if isinstance(prefs, dict):
+        return dict(prefs)
+    return {}
 
 
 def get_habits_effective_from_date(prefs: Any) -> Optional[date]:
@@ -27,6 +38,27 @@ def get_habits_effective_from_date(prefs: Any) -> Optional[date]:
         return date.fromisoformat(str(raw)[:10])
     except ValueError:
         return None
+
+
+def get_habits_effective_for_current_shift(
+    prefs: Any, current_shift_type: str, local_today: date
+) -> Optional[date]:
+    """
+    First date to include ``shift_summaries`` for the user's *current* schedule mode
+    (``constant`` vs ``rotating``). If the stored mode in prefs does not match, only
+    data from ``local_today`` onward is used (drops stale reports from a previous mode).
+    """
+    p = _prefs_as_dict(prefs)
+    eff = get_habits_effective_from_date(p)
+    stored = p.get(HABITS_EFFECTIVE_SHIFT_KEY) or p.get("habitsEffectiveShiftType")
+    ct = (current_shift_type or "constant").strip() or "constant"
+    if eff is None:
+        return None
+    if not stored or str(stored).strip() == "":
+        return eff
+    if str(stored).strip() == ct:
+        return eff
+    return local_today
 
 
 def week_query_start(week_start: date, eff: Optional[date]) -> date:

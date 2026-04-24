@@ -15,7 +15,7 @@ from shared.schedule_utils import (
 )
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
-from shared.insights import get_habits_effective_from_date, week_query_start
+from shared.insights import get_habits_effective_for_current_shift, week_query_start
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
@@ -822,37 +822,41 @@ def _set_habits_effective_from_today(user_id: str) -> None:
     """After changing schedule type, ignore older end-of-day logs for habits / charts."""
     tz = _user_timezone(user_id)
     d0 = str(get_user_now_from_timezone_name(tz).date())
-    u = supabase_client.table("users").select("notification_prefs").eq("id", user_id).limit(1).execute()
+    u = supabase_client.table("users").select("notification_prefs, shift_type").eq("id", user_id).limit(1).execute()
     row = u.data[0] if u.data else {}
     prefs = safe_json_parse(row.get("notification_prefs")) or {}
     if not isinstance(prefs, dict):
         prefs = {}
     prefs["habits_effective_from"] = d0
+    prefs["habits_effective_shift_type"] = (row.get("shift_type") or "constant").strip() or "constant"
     supabase_client.table("users").update({"notification_prefs": prefs}).eq("id", user_id).execute()
 
 
 def _mock_suggestion_items(shift_type: str) -> list:
-    """Placeholder ideas when there is not enough data yet for the current schedule (read-only; no apply)."""
+    """Silly placeholder ideas only when there is no real data for the current schedule (read-only; no apply)."""
     st = (shift_type or "constant") == "rotating"
     tlab = "night · " if st else ""
     return [
         {
-            "title": f"☕ {tlab}Sample · coffee window",
-            "body": "When you have a few check-ins on this schedule, we’ll show patterns here.",
-            "action": "Example only — not applied",
+            "title": f"🦆 {tlab}FAKE: coffee with the moon penguins at 13:37",
+            "body": "Not your data. We made this up so the screen isn’t empty. Real ideas use check-ins on your current schedule type only.",
+            "action": "Nope — it’s a joke. Wait for real ideas.",
             "is_example": True,
+            "silly_example": True,
         },
         {
-            "title": f"🍽 {tlab}Sample · last meal",
-            "body": "Logging meals against your plan unlocks nudges to protect sleep.",
-            "action": "Example only — not applied",
+            "title": f"🥪 {tlab}SILLY: midnight sandwich parade",
+            "body": "Still not real. After you log a few days on this shift type, silly ducks swim away and real nudges appear.",
+            "action": "Cannot apply. Placeholder only.",
             "is_example": True,
+            "silly_example": True,
         },
         {
-            "title": "😴 Sample · rest quality",
-            "body": "End-of-shift reviews feed your week report and better suggestions over time.",
-            "action": "Example only — not applied",
+            "title": "🧸 Example: your pillow didn’t file taxes",
+            "body": "These cards vanish the moment we have a real pattern from your latest schedule. Nothing here changes your plan.",
+            "action": "Just a joke. Keep logging check-ins.",
             "is_example": True,
+            "silly_example": True,
         },
     ]
 
@@ -864,7 +868,8 @@ def _build_weekly_suggestion_items(user_id) -> list:
     local_today = now_local.date()
     week_start = local_today - timedelta(days=local_today.weekday())
     week_end = week_start + timedelta(days=6)
-    eff = get_habits_effective_from_date(urow.get("notification_prefs"))
+    st_label = (urow.get("shift_type") or "constant").strip() or "constant"
+    eff = get_habits_effective_for_current_shift(urow.get("notification_prefs"), st_label, local_today)
     q0 = week_query_start(week_start, eff)
 
     def parse_responses(resp):
@@ -932,7 +937,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
         return f"{hh:02d}:{mm:02d}"
 
     suggestions = []
-    st = urow.get("shift_type") or "constant"
+    st = st_label
 
     if st == "rotating":
         rpat = (
@@ -1184,6 +1189,15 @@ def _build_weekly_suggestion_items(user_id) -> list:
     return suggestions
 
 
+def _suggestions_list_resolved(user_id) -> list:
+    """GET /suggestions and apply: real ideas only when any exist, else placeholder examples."""
+    items = _build_weekly_suggestion_items(user_id)
+    real = [x for x in (items or []) if x and not x.get("is_example")]
+    if real:
+        return real
+    return list(items or [])
+
+
 def _shift_one_window_time(wlist: list, from_key: str, to_key: str):
     cwin = [dict(x) for x in wlist] if wlist else []
     for it in cwin:
@@ -1359,7 +1373,7 @@ def _apply_suggestion_index(user_id: str, urow: dict, idx: int) -> tuple:
     (None, error_dict) for jsonify on failure. On success, rotating return uses dict ok+rotating;
     constant returns full row dict.
     """
-    items = _build_weekly_suggestion_items(user_id)
+    items = _suggestions_list_resolved(user_id)
     if idx < 0 or idx >= len(items):
         return None, ({"error": "That suggestion is no longer available. Refresh the list."}, 400)
     if (items[idx] or {}).get("is_example"):
@@ -1398,7 +1412,7 @@ def apply_weekly_suggestion():
         if not index_set:
             return jsonify({"error": "suggestion_indices must be a list of non-negative indices"}), 400
         # Snapshot apply payloads in one list build so indices stay stable while multiple updates run.
-        items = _build_weekly_suggestion_items(user_id)
+        items = _suggestions_list_resolved(user_id)
         applies: List[dict] = []
         for i in sorted(index_set):
             if i < len(items):
@@ -1450,4 +1464,6 @@ def weekly_suggestions():
     if denied:
         return denied
 
-    return jsonify({"items": _build_weekly_suggestion_items(user_id)})
+    items = _suggestions_list_resolved(user_id)
+    mode = "examples" if (items and (items[0] or {}).get("is_example")) else "live"
+    return jsonify({"items": items, "suggestions_mode": mode})

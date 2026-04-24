@@ -13,6 +13,7 @@ from shared.schedule_utils import (
 )
 from shared.insights import (
     build_bad_habit_suggestion_items,
+    get_habits_effective_for_current_shift,
     get_habits_effective_from_date,
     week_query_start,
 )
@@ -125,6 +126,15 @@ class TestInsightsBadHabits(unittest.TestCase):
 
     def test_habits_effective_none(self):
         self.assertIsNone(get_habits_effective_from_date(None))
+
+    def test_habits_effective_shift_mismatch_uses_today(self):
+        d0 = date(2025, 3, 1)
+        today = date(2025, 3, 20)
+        prefs = {"habits_effective_from": "2025-03-01", "habits_effective_shift_type": "rotating"}
+        eff = get_habits_effective_for_current_shift(prefs, "constant", today)
+        self.assertEqual(eff, today)
+        eff_ok = get_habits_effective_for_current_shift(prefs, "rotating", today)
+        self.assertEqual(eff_ok, d0)
 
 
 class TestRotatingEngine(unittest.TestCase):

@@ -1516,22 +1516,11 @@
     function mockSuggestions() {
         return [
             {
-                title: '☕ Sample · coffee',
-                body: 'When check-ins are logged for your current schedule, real ideas show here.',
-                action: 'Example only',
+                title: '🦆 OFFLINE: fake coffee with the moon penguins',
+                body: "These are jokes — server didn't load. Real ideas need the API.",
+                action: "Still not your data.",
                 is_example: true,
-            },
-            {
-                title: '🍽 Sample · meal',
-                body: 'Habit logs are scoped to the schedule type you are using now.',
-                action: 'Example only',
-                is_example: true,
-            },
-            {
-                title: '😴 Sample · rest',
-                body: 'End-of-shift reviews improve this list over time.',
-                action: 'Example only',
-                is_example: true,
+                silly_example: true,
             },
         ];
     }
@@ -2099,11 +2088,19 @@
 
         (async () => {
             let items = mockSuggestions();
+            let sugMode = 'examples';
             try {
                 const res = await api(`/schedules/suggestions?telegram_id=${user.id}`);
                 if (res.ok) {
                     const data = await res.json();
-                    items = data.items || data.suggestions || data || items;
+                    const raw = data.items || data.suggestions;
+                    if (Array.isArray(raw) && raw.length) {
+                        const realOnly = raw.filter((x) => x && !x.is_example);
+                        items = realOnly.length > 0 ? realOnly : raw;
+                        sugMode = data.suggestions_mode || (items[0] && items[0].is_example ? 'examples' : 'live');
+                    } else {
+                        items = Array.isArray(raw) && raw.length === 0 ? [] : items;
+                    }
                 }
             } catch (e) {
                 console.warn('suggestions fetch failed', e);
@@ -2118,13 +2115,17 @@
                 .filter(({ it }) => it && !ignored.has(suggestionFingerprint(it)));
 
             const hasApplicable = visible.some(({ it: x }) => x && !x.is_example);
+            const leadIdeas = sugMode === 'examples' ? t('sugMockLead') : t('sugL');
             const sugRows = visible.length
                 ? visible
                       .map(({ it, origIdx }) => {
                           if (it && it.is_example) {
                               return `<div class="nf-suggestion nf-suggestion--example" data-sug-idx="${origIdx}">
                             <div class="nf-sug-body">
+                            <div class="nf-sug-mock-hdr">
                             <span class="nf-sug-example-pill">${escapeHtml(t('sugEx'))}</span>
+                            <span class="nf-sug-mock-warn">${escapeHtml(t('sugMockSub'))}</span>
+                            </div>
                             <h3>${escapeHtml(it.title)}</h3>
                             <p>${escapeHtml(it.body)}</p>
                             <p class="nf-sug-action nf-muted">${escapeHtml(it.action)}</p>
@@ -2160,7 +2161,7 @@
                 <div class="nf-screen nf-sug-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
                     ${topbarMainTabPage(t('ideasPage'))}
-                    <p class="nf-sug-lead">${escapeHtml(t('sugL'))}</p>
+                    <p class="nf-sug-lead">${escapeHtml(leadIdeas)}</p>
                     ${sugRows}
                     ${
                         visible.length && hasApplicable

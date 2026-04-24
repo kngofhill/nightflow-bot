@@ -8,7 +8,7 @@ sys.path.append(".")
 from shared.db import supabase_client
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.schedule_utils import safe_json_parse, str_to_time, time_to_str
-from shared.insights import get_habits_effective_from_date, week_query_start
+from shared.insights import get_habits_effective_for_current_shift, week_query_start
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
 from api.request_util import get_user_from_request
 from api.subscription_access import require_pro_access, fetch_user_row_by_id
@@ -53,6 +53,7 @@ def weekly_report():
     tz = urow.get("timezone") or DEFAULT_TIMEZONE
     now_local = get_user_now_from_timezone_name(tz)
     local_today = now_local.date()
+    st_row = (urow.get("shift_type") or "constant").strip() or "constant"
 
     start_q = request.args.get("start_date")
     end_q = request.args.get("end_date")
@@ -68,7 +69,7 @@ def weekly_report():
         week_start = local_today - timedelta(days=local_today.weekday())
         week_end = week_start + timedelta(days=6)
 
-    eff = get_habits_effective_from_date(urow.get("notification_prefs"))
+    eff = get_habits_effective_for_current_shift(urow.get("notification_prefs"), st_row, local_today)
     q0 = week_query_start(week_start, eff)
 
     rows = (
