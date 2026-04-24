@@ -102,7 +102,8 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
+    /* `visible` so bottom tab bar can extend into horizontal padding (full #app width). */
+    overflow: visible;
 }
 
 .nf-screen {
@@ -692,14 +693,27 @@ body {
     padding-bottom: 4px;
 }
 
+/* Counteract .screen-root horizontal padding so the bar is full app width (edge-to-edge). */
+.nf-screen--tabbed .nf-main-tabbar {
+    margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+    margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
+    width: calc(
+        100% + max(16px, env(safe-area-inset-left, 0px)) + max(16px, env(safe-area-inset-right, 0px))
+    );
+    box-sizing: border-box;
+    align-self: stretch;
+    max-width: none;
+}
+
 .nf-main-tabbar {
     flex-shrink: 0;
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    justify-items: stretch;
+    align-items: stretch;
     gap: 0;
-    margin: 0 -4px 0;
-    padding: 6px 2px 2px;
-    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    margin: 0;
+    padding: 8px 0 max(8px, env(safe-area-inset-bottom, 0px));
     background: var(--tg-theme-secondary-bg-color, rgba(0, 0, 0, 0.35));
     border-top: 1px solid var(--tg-theme-hint-color, var(--nf-border));
     border-radius: 16px 16px 0 0;
@@ -707,7 +721,7 @@ body {
 }
 
 .nf-main-tabbar--free {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .nf-tab {
@@ -716,23 +730,28 @@ body {
     border: none;
     background: transparent;
     color: var(--tg-theme-hint-color, var(--nf-muted));
-    padding: 6px 2px 8px;
+    padding: 6px 4px 8px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 3px;
     min-height: 52px;
     min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     cursor: pointer;
     border-radius: 10px;
     font: inherit;
     touch-action: manipulation;
+    justify-self: stretch;
+    align-self: stretch;
 }
 
 .nf-tab.is-active {
     color: var(--tg-theme-button-color, var(--nf-primary));
-    background: var(--nf-primary-dim, rgba(64, 167, 227, 0.12));
+    background: var(--nf-primary-dim, rgba(64, 167, 227, 0.16));
 }
 
 .nf-tab-ico {
