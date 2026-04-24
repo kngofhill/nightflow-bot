@@ -2270,7 +2270,7 @@
                     <p class="nf-sug-lead">${escapeHtml(leadIdeas)}</p>
                     ${sugRows}
                     ${
-                        visible.length && hasApplicable
+                        displayPairs.length && hasApplicable
                             ? `<div class="nf-sug-apply-bar">
                         <button type="button" class="nf-cta" id="btn-sug-apply" disabled>${escapeHtml(
                             t('sugAp')
