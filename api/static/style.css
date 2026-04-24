@@ -3200,14 +3200,18 @@ input[type="date"]:focus {
 
 /* —— Full schedule timeline —— */
 .nf-tl-bridge {
-    font-size: 0.82rem;
-    line-height: 1.35;
-    color: var(--tg-theme-hint-color, var(--nf-muted));
-    margin: 0 0 12px;
-    padding: 8px 10px;
-    border-left: 3px solid var(--tg-theme-button-color, var(--nf-primary));
-    border-radius: 0 8px 8px 0;
-    background: var(--tg-theme-secondary-bg-color, rgba(0, 0, 0, 0.15));
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: var(--tg-theme-text-color, var(--nf-text));
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: var(--nf-radius-sm);
+    border: 1px solid rgba(100, 181, 246, 0.22);
+    background: linear-gradient(
+        135deg,
+        rgba(100, 181, 246, 0.12),
+        var(--tg-theme-secondary-bg-color, rgba(0, 0, 0, 0.12))
+    );
 }
 
 ul.nf-tl.nf-timeline {
@@ -3216,6 +3220,43 @@ ul.nf-tl.nf-timeline {
     padding: 0 0 0 8px;
     position: relative;
     border-left: 2px solid var(--tg-theme-hint-color, var(--nf-border));
+}
+
+/* Phase headers (Plan timeline) */
+.nf-tl-section {
+    list-style: none;
+    position: relative;
+    margin: 0;
+    padding: 0;
+    margin-left: -8px;
+    padding-left: 8px;
+}
+
+.nf-tl-section-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 8px;
+    padding: 0 0 0 0;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--tg-theme-hint-color, var(--nf-muted));
+}
+
+ul.nf-tl.nf-timeline > .nf-tl-section:first-child .nf-tl-section-label {
+    margin-top: 0;
+}
+
+.nf-tl-section-ico {
+    font-size: 0.9rem;
+    line-height: 1;
+    opacity: 0.95;
+}
+
+.nf-tl-section-txt {
+    line-height: 1.2;
 }
 
 .nf-tl-item {
@@ -3370,20 +3411,32 @@ ul.nf-tl.nf-timeline {
     color: var(--tg-theme-button-text-color, #fff);
 }
 
+.nf-full-days {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
 .nf-day-block {
-    margin-bottom: 18px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 0;
+    padding: 14px 12px 16px;
+    border-radius: var(--nf-radius);
+    border: 1px solid var(--nf-border);
+    background: var(--tg-theme-secondary-bg-color, rgba(255, 255, 255, 0.04));
+    box-shadow: var(--nf-shadow-sm);
 }
 
 .nf-day-block:last-of-type {
-    border-bottom: none;
+    margin-bottom: 0;
 }
 
 .nf-day-head {
-    margin: 0 0 4px;
-    font-size: 0.95rem;
+    margin: 0 0 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     line-height: 1.35;
+    color: var(--tg-theme-text-color, var(--nf-text));
 }
 
 .nf-day-meta {

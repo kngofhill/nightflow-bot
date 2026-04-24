@@ -131,6 +131,9 @@
         }
     }
 
+    /** English-only app: never use the device locale for date strings (avoids e.g. Russian month names). */
+    const NF_DATE_LOCALE = 'en-US';
+
     function localDateStrNow() {
         return new Date().toISOString().slice(0, 10);
     }
@@ -455,7 +458,7 @@
     }
 
     function formatLongDate(d) {
-        return d.toLocaleDateString(undefined, {
+        return d.toLocaleDateString(NF_DATE_LOCALE, {
             weekday: 'long',
             month: 'long',
             day: 'numeric',
@@ -463,8 +466,8 @@
     }
 
     function formatRangeDate(d1, d2) {
-        const a = d1.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        const b = d2.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const a = d1.toLocaleDateString(NF_DATE_LOCALE, { month: 'short', day: 'numeric' });
+        const b = d2.toLocaleDateString(NF_DATE_LOCALE, { month: 'short', day: 'numeric', year: 'numeric' });
         return `${a} – ${b}`;
     }
 
@@ -826,6 +829,48 @@
         return ev;
     }
 
+    function isHabitTimelineKind(k) {
+        return k === 'coffee' || k === 'meal' || k === 'light' || k === 'other';
+    }
+
+    /**
+     * Group events for the Plan timeline: same sort keys as collectEvents.
+     * @returns {'shift'|'wind'|'rest'|'rem'}
+     */
+    function timelineEventPhase(e, sched) {
+        const k = e.kind;
+        if (k === 'work_start' || k === 'work_end') return 'shift';
+        if (k === 'sleep_start' || k === 'sleep_end') return 'rest';
+        if (isHabitTimelineKind(k)) {
+            if (sched && sched.work_start && sched.work_end) {
+                const wsK = timeSortKeyForSchedule(formatTime(sched.work_start), sched);
+                const weK = timeSortKeyForSchedule(formatTime(sched.work_end), sched);
+                if (e.sort >= wsK && e.sort <= weK) return 'shift';
+            }
+            if (sched && sched.work_end && sched.sleep_start) {
+                const weK = timeSortKeyForSchedule(formatTime(sched.work_end), sched);
+                const ssK = timeSortKeyForSchedule(formatTime(sched.sleep_start), sched);
+                if (e.sort > weK && e.sort < ssK) return 'wind';
+            }
+            return 'rem';
+        }
+        return 'rem';
+    }
+
+    function timelinePhaseLabel(ph) {
+        if (ph === 'shift') return t('tlPhaseShift');
+        if (ph === 'wind') return t('tlPhaseWind');
+        if (ph === 'rest') return t('tlPhaseRest');
+        return t('tlPhaseRem');
+    }
+
+    function timelinePhaseIcon(ph) {
+        if (ph === 'shift') return '💼';
+        if (ph === 'wind') return '✨';
+        if (ph === 'rest') return '😴';
+        return '⏰';
+    }
+
     function hasProEntitlement() {
         return !!(state.userRow && state.userRow.has_pro_entitlement);
     }
@@ -841,7 +886,7 @@
         try {
             const d = new Date(s);
             if (Number.isNaN(d.getTime())) return '';
-            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            return d.toLocaleDateString(NF_DATE_LOCALE, { year: 'numeric', month: 'short', day: 'numeric' });
         } catch (e) {
             return '';
         }
@@ -1870,7 +1915,7 @@
         return String(t);
     }
 
-    function buildTimelineListHtml(sched) {
+    function buildTimelineListHtml(sched, opts) {
         const s = normalizeScheduleFields(sched) || sched;
         const events = collectEvents(s);
         const kc = (k) =>
@@ -1884,11 +1929,10 @@
                 light: 'nf-tl--light',
                 other: 'nf-tl--other',
             }[k] || 'nf-tl--other');
-        return events
-            .map((e) => {
-                const cls = kc(e.kind);
-                const tag = eventTypeTag(e.kind);
-                return `<li class="nf-tl-item ${cls}">
+        const oneRow = (e) => {
+            const cls = kc(e.kind);
+            const tag = eventTypeTag(e.kind);
+            return `<li class="nf-tl-item ${cls}">
                     <span class="nf-tl-dot" aria-hidden="true"></span>
                     <div class="nf-tl-body">
                         <span class="nf-tl-time">${escapeHtml(e.time)}</span>
@@ -1899,8 +1943,37 @@
                         </div>
                     </div>
                 </li>`;
-            })
-            .join('');
+        };
+        if (!events.length) return '';
+        const grouped = !opts || opts.group !== false;
+        if (grouped && s) {
+            const phaseSet = new Set(events.map((e) => timelineEventPhase(e, s)));
+            if (phaseSet.size >= 2) {
+                const parts = [];
+                let last = null;
+                for (const e of events) {
+                    const p = timelineEventPhase(e, s);
+                    if (p !== last) {
+                        const rawLab = timelinePhaseLabel(p);
+                        const lab = escapeHtml(rawLab);
+                        const ico = escapeHtml(timelinePhaseIcon(p));
+                        const attrLab = String(rawLab).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+                        parts.push(
+                            `<li class="nf-tl-section" role="group" aria-label="${attrLab}">
+                                <div class="nf-tl-section-label">
+                                    <span class="nf-tl-section-ico" aria-hidden="true">${ico}</span>
+                                    <span class="nf-tl-section-txt">${lab}</span>
+                                </div>
+                            </li>`
+                        );
+                        last = p;
+                    }
+                    parts.push(oneRow(e));
+                }
+                return parts.join('');
+            }
+        }
+        return events.map((e) => oneRow(e)).join('');
     }
 
     function daySectionHtml(dayRow, isMulti) {
@@ -1908,12 +1981,12 @@
         if (!sched || sched.shift_type === 'off') {
             const dlabel = sched && sched.date ? String(sched.date) : '';
             const dPretty = dlabel
-                ? new Date(dlabel + 'T12:00:00').toLocaleDateString(undefined, {
+                ? new Date(dlabel + 'T12:00:00').toLocaleDateString(NF_DATE_LOCALE, {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',
                   })
-                : new Date().toLocaleDateString(undefined, {
+                : new Date().toLocaleDateString(NF_DATE_LOCALE, {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',
@@ -1927,12 +2000,12 @@
         }
 
         const dStr = sched.date
-            ? new Date(String(sched.date) + 'T12:00:00').toLocaleDateString(undefined, {
+            ? new Date(String(sched.date) + 'T12:00:00').toLocaleDateString(NF_DATE_LOCALE, {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
               })
-            : new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            : new Date().toLocaleDateString(NF_DATE_LOCALE, { month: 'short', day: 'numeric' });
         const stu = (sched.shift_type || '').toUpperCase();
         const trBadge =
             sched.is_transition_day === true
@@ -2598,7 +2671,7 @@
     function formatProExpiryDate(iso) {
         if (!iso) return '';
         try {
-            return new Date(iso).toLocaleDateString(undefined, {
+            return new Date(iso).toLocaleDateString(NF_DATE_LOCALE, {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',
@@ -2713,7 +2786,7 @@
         let pStartNice = '—';
         if (pStart) {
             try {
-                pStartNice = new Date(String(pStart) + 'T12:00:00').toLocaleDateString(undefined, {
+                pStartNice = new Date(String(pStart) + 'T12:00:00').toLocaleDateString(NF_DATE_LOCALE, {
                     month: 'short',
                     day: 'numeric',
                     year: 'numeric',
@@ -3844,7 +3917,7 @@
             </div>`;
         };
 
-        const dateLong = d.toLocaleDateString('en-US', {
+        const dateLong = d.toLocaleDateString(NF_DATE_LOCALE, {
             weekday: 'long',
             month: 'long',
             day: 'numeric',
