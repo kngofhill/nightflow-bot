@@ -40,6 +40,8 @@ from shared.bot_menu import (
     BOT_COMMANDS_HELP,
     REPLY_BTN_COMMANDS,
     REPLY_BTN_PROFILE,
+    REPLY_BTN_SUPPORT,
+    SUPPORT_REPLY_HTML,
     format_telegram_profile,
     reply_main_menu_keyboard,
     reply_menu_text_filter,
@@ -232,8 +234,19 @@ async def deliver_commands_help(
     )
 
 
+async def deliver_support(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Support key sends text; reply keyboards cannot open t.me URLs directly."""
+    await context.bot.send_message(
+        chat_id,
+        SUPPORT_REPLY_HTML,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=reply_main_menu_keyboard(),
+    )
+
+
 async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Profile & Commands — Mini App / Support use web_app / URL keys (no text to the bot)."""
+    """Profile, Commands, Support — Mini App uses ``web_app`` (no message text)."""
     if not update.message or not update.message.text:
         return
     text = update.message.text.strip()
@@ -243,6 +256,8 @@ async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYP
         await deliver_profile(context, chat_id, uid)
     elif text == REPLY_BTN_COMMANDS:
         await deliver_commands_help(context, chat_id)
+    elif text == REPLY_BTN_SUPPORT:
+        await deliver_support(context, chat_id)
 
 
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

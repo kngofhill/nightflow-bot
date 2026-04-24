@@ -27,9 +27,16 @@ REPLY_BTN_COMMANDS = "📋 Commands"
 REPLY_MENU_TEXT_BUTTONS = (
     REPLY_BTN_PROFILE,
     REPLY_BTN_COMMANDS,
+    REPLY_BTN_SUPPORT,
 )
 
 SUPPORT_TELEGRAM_URL = "https://t.me/nightflowadmin"
+
+# Reply keyboards cannot use ``url=`` on keys (Telegram API — only InlineKeyboardButton has url).
+SUPPORT_REPLY_HTML = (
+    "<b>Nightflow support</b>\n\n"
+    f"Message us: <a href=\"{SUPPORT_TELEGRAM_URL}\">@nightflowadmin</a>"
+)
 
 
 BOT_COMMANDS_HELP = """\
@@ -53,7 +60,7 @@ BOT_COMMANDS_HELP = """\
 
 Tip: schedules and check-ins live in the <b>Mini App</b> (📱 key or ⋮ menu).
 
-<b>Support</b> — tap 💬 Support or message @nightflowadmin
+<b>Support</b> — tap 💬 Support (bot sends a link) or message @nightflowadmin
 """
 
 
@@ -72,7 +79,7 @@ def reply_main_menu_keyboard() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(REPLY_BTN_COMMANDS),
-                KeyboardButton(REPLY_BTN_SUPPORT, url=SUPPORT_TELEGRAM_URL),
+                KeyboardButton(REPLY_BTN_SUPPORT),
             ],
         ],
         resize_keyboard=True,
