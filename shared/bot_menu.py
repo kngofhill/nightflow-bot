@@ -1,13 +1,15 @@
-"""Inline menu (2×2) + profile / commands copy for Telegram."""
+"""Reply keyboard (large bottom keys) + profile / commands copy for Telegram."""
 
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from telegram.ext import filters
 
 from shared.subscription import (
     subscription_meta_for_user,
@@ -16,11 +18,16 @@ from shared.subscription import (
 )
 from shared.time_utils import DEFAULT_TIMEZONE
 
-# Inline keyboard — callback ``menu:*`` handled in ``bot/main.py`` (except url / web_app).
-INLINE_BTN_PROFILE = "👤 Profile"
-INLINE_BTN_MINI_APP = "📱 Mini App"
-INLINE_BTN_SUPPORT = "💬 Support"
-INLINE_BTN_COMMANDS = "📋 Commands"
+# Reply keyboard — same labels as ``on_reply_menu_button`` in ``bot/main.py``.
+REPLY_BTN_PROFILE = "👤 Profile"
+REPLY_BTN_MINI_APP = "📱 Mini App"
+REPLY_BTN_SUPPORT = "💬 Support"
+REPLY_BTN_COMMANDS = "📋 Commands"
+
+REPLY_MENU_TEXT_BUTTONS = (
+    REPLY_BTN_PROFILE,
+    REPLY_BTN_COMMANDS,
+)
 
 SUPPORT_TELEGRAM_URL = "https://t.me/nightflowadmin"
 
@@ -28,7 +35,7 @@ SUPPORT_TELEGRAM_URL = "https://t.me/nightflowadmin"
 BOT_COMMANDS_HELP = """\
 <b>Bot commands</b>
 
-/start — Welcome and menu (inline buttons below the bot message)
+/start — Welcome and the bottom menu (large keys)
 /profile — Your subscription & schedule summary
 
 <b>Billing (Stars)</b>
@@ -44,7 +51,7 @@ BOT_COMMANDS_HELP = """\
 /status — Debug timestamps (testing)
 /lang — Language info (English only)
 
-Tip: schedules and check-ins live in the <b>Mini App</b> (📱 button or ⋮ menu).
+Tip: schedules and check-ins live in the <b>Mini App</b> (📱 key or ⋮ menu).
 
 <b>Support</b> — tap 💬 Support or message @nightflowadmin
 """
@@ -54,27 +61,29 @@ def webapp_url() -> str:
     return os.getenv("WEBAPP_URL", "https://nightflow-bot-production.up.railway.app").strip()
 
 
-def main_menu_inline_markup() -> InlineKeyboardMarkup:
-    """2×2 grid: Profile | Mini App, Commands | Support (like common bot menus)."""
+def reply_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """2×2 bottom keys (Profile | Mini App, Commands | Support) — ``resize_keyboard`` for slim rows."""
     wu = webapp_url()
-    return InlineKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(
-                    INLINE_BTN_PROFILE, callback_data="menu:profile"
-                ),
-                InlineKeyboardButton(
-                    INLINE_BTN_MINI_APP, web_app=WebAppInfo(url=wu)
-                ),
+                KeyboardButton(REPLY_BTN_PROFILE),
+                KeyboardButton(REPLY_BTN_MINI_APP, web_app=WebAppInfo(url=wu)),
             ],
             [
-                InlineKeyboardButton(
-                    INLINE_BTN_COMMANDS, callback_data="menu:commands"
-                ),
-                InlineKeyboardButton(INLINE_BTN_SUPPORT, url=SUPPORT_TELEGRAM_URL),
+                KeyboardButton(REPLY_BTN_COMMANDS),
+                KeyboardButton(REPLY_BTN_SUPPORT, url=SUPPORT_TELEGRAM_URL),
             ],
-        ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Message",
     )
+
+
+def reply_menu_text_filter():
+    pattern = "^(" + "|".join(re.escape(t) for t in REPLY_MENU_TEXT_BUTTONS) + ")$"
+    return filters.TEXT & ~filters.COMMAND & filters.Regex(pattern)
 
 
 def _fmt_local(dt: Optional[datetime], tz_name: str) -> str:

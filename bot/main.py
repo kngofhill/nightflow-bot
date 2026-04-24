@@ -11,7 +11,6 @@ from telegram import (
     Update,
     BotCommand,
     MenuButtonWebApp,
-    ReplyKeyboardRemove,
     WebAppInfo,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -39,8 +38,11 @@ from shared.db import (
 from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
 from shared.bot_menu import (
     BOT_COMMANDS_HELP,
+    REPLY_BTN_COMMANDS,
+    REPLY_BTN_PROFILE,
     format_telegram_profile,
-    main_menu_inline_markup,
+    reply_main_menu_keyboard,
+    reply_menu_text_filter,
     webapp_url,
 )
 from shared.subscription import (
@@ -105,23 +107,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             INTRO,
             parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=reply_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             welcome_back(user.first_name or "there", "en"),
             parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=reply_main_menu_keyboard(),
         )
-    await update.message.reply_text(
-        "<b>Menu</b>",
-        parse_mode="HTML",
-        reply_markup=main_menu_inline_markup(),
-    )
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(LANG_ONLY, parse_mode="HTML")
+    await update.message.reply_text(
+        LANG_ONLY,
+        parse_mode="HTML",
+        reply_markup=reply_main_menu_keyboard(),
+    )
 
 
 async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,7 +144,7 @@ async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=tid,
                 text=msg_language_saved("en"),
-                reply_markup=main_menu_inline_markup(),
+                reply_markup=reply_main_menu_keyboard(),
             )
         except Exception as e2:
             logger.error("send_message after lang: %s", e2)
@@ -216,7 +217,7 @@ async def deliver_profile(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user
         chat_id,
         text,
         parse_mode="HTML",
-        reply_markup=main_menu_inline_markup(),
+        reply_markup=reply_main_menu_keyboard(),
     )
 
 
@@ -227,12 +228,25 @@ async def deliver_commands_help(
         chat_id,
         BOT_COMMANDS_HELP,
         parse_mode="HTML",
-        reply_markup=main_menu_inline_markup(),
+        reply_markup=reply_main_menu_keyboard(),
     )
 
 
+async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Profile & Commands — Mini App / Support use web_app / URL keys (no text to the bot)."""
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    uid = update.effective_user.id
+    if text == REPLY_BTN_PROFILE:
+        await deliver_profile(context, chat_id, uid)
+    elif text == REPLY_BTN_COMMANDS:
+        await deliver_commands_help(context, chat_id)
+
+
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inline ``menu:*`` (main grid + legacy subscribe/pause/… on old messages)."""
+    """Legacy inline ``menu:*`` on old messages + subscribe/pause/…"""
     q = update.callback_query
     if not q or not str(q.data).startswith("menu:"):
         return
@@ -259,7 +273,7 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id,
             LANG_ONLY,
             parse_mode="HTML",
-            reply_markup=main_menu_inline_markup(),
+            reply_markup=reply_main_menu_keyboard(),
         )
 
 
@@ -790,6 +804,7 @@ def main():
         CommandHandler(["lang", "language", "setlang"], cmd_lang)
     )
     application.add_handler(CommandHandler("profile", cmd_profile))
+    application.add_handler(MessageHandler(reply_menu_text_filter(), on_reply_menu_button))
     application.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
     application.add_handler(CommandHandler("pause", pause))
