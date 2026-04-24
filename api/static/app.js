@@ -161,6 +161,21 @@
             localStorage.setItem(eosKey('ignore'), '1');
         } catch (e) {}
     }
+    function transCardKey() {
+        return `nf_trans_hide_${localDateStrNow()}`;
+    }
+    function isTransCardHiddenToday() {
+        try {
+            return localStorage.getItem(transCardKey()) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+    function setTransCardHiddenToday() {
+        try {
+            localStorage.setItem(transCardKey(), '1');
+        } catch (e) {}
+    }
     function suggestionFingerprint(it) {
         if (!it) return '';
         return [it.title, it.body, it.action].join('\u0001');
@@ -1501,19 +1516,22 @@
     function mockSuggestions() {
         return [
             {
-                title: '☕ 01:30 COFFEE',
-                body: 'Missed 4 times this week.',
-                action: 'MOVE TO 01:00',
+                title: '☕ Sample · coffee',
+                body: 'When check-ins are logged for your current schedule, real ideas show here.',
+                action: 'Example only',
+                is_example: true,
             },
             {
-                title: '🍽️ 02:00 MEAL',
-                body: 'Missed 5 times this week.',
-                action: 'MOVE TO 01:30',
+                title: '🍽 Sample · meal',
+                body: 'Habit logs are scoped to the schedule type you are using now.',
+                action: 'Example only',
+                is_example: true,
             },
             {
-                title: '😴 SLEEP WINDOW',
-                body: 'Deficit: 8 hours this week.',
-                action: 'ADD 30 MINUTES',
+                title: '😴 Sample · rest',
+                body: 'End-of-shift reviews improve this list over time.',
+                action: 'Example only',
+                is_example: true,
             },
         ];
     }
@@ -1752,7 +1770,7 @@
             const isFree = !hasProEntitlement();
             const paidPro = hasActivePaidPro();
             // TESTING ONLY — revert ?? fallback to 50 before production
-            const stars = state.userRow?.pro_price_stars ?? 1;
+            const stars = state.userRow?.pro_price_stars ?? 88;
             if (!paidPro && isFree) {
                 body += `<div class="nf-upgrade-hero" role="region" aria-label="${escapeHtml(t('proAppName'))}">
                     <div class="nf-upgrade-hero-title">${escapeHtml(t('proHeroTitle'))}</div>
@@ -1785,12 +1803,20 @@
                 body += `<p class="nf-trial-hint">${escapeHtml(t('trialHint'))}</p>`;
             }
 
-            if (rotating && hasProEntitlement()) {
+            if (rotating && hasProEntitlement() && !isTransCardHiddenToday()) {
                 body += `
                     <div class="nf-card nf-transition-card">
-                        <div class="nf-card-label">${escapeHtml(t('transKicker'))}</div>
-                        <div style="font-weight:600;">🔄 ${escapeHtml(t('dashTransStub'))}</div>
+                        <div class="nf-trans-head">
+                            <span class="nf-trans-ico" aria-hidden="true">🔄</span>
+                            <div>
+                                <p class="nf-trans-title">${escapeHtml(t('transCardT'))}</p>
+                                <p class="nf-trans-text">${escapeHtml(t('transCardD'))}</p>
+                            </div>
+                        </div>
+                        <div class="nf-trans-actions">
                         <button type="button" class="nf-cta nf-btn" id="btn-dash-trans">${escapeHtml(t('transView'))}</button>
+                        <button type="button" class="nf-trans-skip" id="btn-trans-card-hide">${escapeHtml(t('transHide'))}</button>
+                        </div>
                     </div>`;
             }
 
@@ -1838,6 +1864,13 @@
 
         const tr = document.getElementById('btn-dash-trans');
         if (tr) tr.onclick = () => go('transition', true);
+        const trH = document.getElementById('btn-trans-card-hide');
+        if (trH) {
+            trH.onclick = () => {
+                setTransCardHiddenToday();
+                renderDashboard();
+            };
+        }
         const rep = document.getElementById('btn-dash-report');
         if (rep) rep.onclick = () => go('summary', true);
     }
@@ -2084,11 +2117,21 @@
                 .map((it, origIdx) => ({ it, origIdx }))
                 .filter(({ it }) => it && !ignored.has(suggestionFingerprint(it)));
 
+            const hasApplicable = visible.some(({ it: x }) => x && !x.is_example);
             const sugRows = visible.length
                 ? visible
-                      .map(
-                          ({ it, origIdx }) => `
-                        <div class="nf-suggestion nf-suggestion-selectable" data-sug-idx="${origIdx}">
+                      .map(({ it, origIdx }) => {
+                          if (it && it.is_example) {
+                              return `<div class="nf-suggestion nf-suggestion--example" data-sug-idx="${origIdx}">
+                            <div class="nf-sug-body">
+                            <span class="nf-sug-example-pill">${escapeHtml(t('sugEx'))}</span>
+                            <h3>${escapeHtml(it.title)}</h3>
+                            <p>${escapeHtml(it.body)}</p>
+                            <p class="nf-sug-action nf-muted">${escapeHtml(it.action)}</p>
+                            </div>
+                        </div>`;
+                          }
+                          return `<div class="nf-suggestion nf-suggestion-selectable" data-sug-idx="${origIdx}">
                             <label class="nf-sug-check">
                                 <input type="checkbox" class="nf-sug-cb" value="${origIdx}" />
                                 <span class="nf-sug-check-ui" aria-hidden="true"></span>
@@ -2102,12 +2145,12 @@
                                     suggestionFingerprint(it)
                                 )}">${escapeHtml(t('sugIg'))}</button>
                                 <button type="button" class="nf-btn-sug-settings js-sug-adj" data-orig-idx="${origIdx}">${escapeHtml(
-                                    t('sugAdj')
-                                )}</button>
+                              t('sugAdj')
+                          )}</button>
                             </div>
                             </div>
-                        </div>`
-                      )
+                        </div>`;
+                      })
                       .join('')
                 : `<div class="nf-card nf-center"><div style="font-weight:600;">${escapeHtml(
                       t('sugEm')
@@ -2120,7 +2163,7 @@
                     <p class="nf-sug-lead">${escapeHtml(t('sugL'))}</p>
                     ${sugRows}
                     ${
-                        visible.length
+                        visible.length && hasApplicable
                             ? `<div class="nf-sug-apply-bar">
                         <button type="button" class="nf-cta" id="btn-sug-apply" disabled>${escapeHtml(
                             t('sugAp')
@@ -2222,29 +2265,55 @@
             light: t('trLgt'),
         };
         $root.innerHTML = `
-            <div class="nf-screen">
+            <div class="nf-screen nf-screen--tabbed nf-trans-page">
+                <div class="nf-tabbar-body">
                 <div class="nf-topbar">
                     <button type="button" class="nf-back" id="btr">← ${escapeHtml(t('back'))}</button>
                     <h1>${escapeHtml(t('trT'))}</h1>
                     <span></span>
                 </div>
-                <p style="font-weight:600;">📅 ${escapeHtml(m.headline)}</p>
-                <p class="nf-field-label">${escapeHtml(t('trP'))}</p>
+                <div class="nf-trans-hero">
+                    <h2>${escapeHtml(t('trHero'))}</h2>
+                    <p>${escapeHtml(t('trHeroSub'))}</p>
+                    <p style="margin-top:10px;font-size:0.88rem;opacity:0.95;">📅 ${escapeHtml(m.headline)}</p>
+                </div>
+                <p class="nf-field-label" style="margin:0 0 8px;">${escapeHtml(t('trP'))}</p>
+                <div class="nf-trans-grid">
                 ${m.blocks
                     .map(
                         (b) => `
-                <div class="nf-card">
-                    <div style="font-weight:700;margin-bottom:8px;">${escapeHtml(b.title)}</div>
-                    ${b.lines.map((l) => `<div class="nf-muted">${escapeHtml(l)}</div>`).join('')}
+                <div class="nf-trans-tile">
+                    <h3>${escapeHtml(b.title)}</h3>
+                    ${b.lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('')}
                 </div>`
                     )
                     .join('')}
-                <p>☕ ${escapeHtml(t('trCa'))}: ${escapeHtml(m.caffeine)}</p>
-                <p>💡 ${escapeHtml(t('trLi'))}: ${escapeHtml(m.light)}</p>
+                </div>
+                <div class="nf-card" style="margin-bottom:12px;">
+                    <p style="margin:0 0 6px;font-weight:600;">☕ ${escapeHtml(t('trCa'))}</p>
+                    <p class="nf-muted" style="margin:0;">${escapeHtml(m.caffeine)}</p>
+                    <p style="margin:10px 0 6px;font-weight:600;">💡 ${escapeHtml(t('trLi'))}</p>
+                    <p class="nf-muted" style="margin:0;">${escapeHtml(m.light)}</p>
+                </div>
                 <button type="button" class="nf-cta" id="btn-rem">${escapeHtml(t('trSetR'))}</button>
+                <button type="button" class="nf-cta-secondary" id="btn-tr-dismiss" style="margin-top:10px;">${escapeHtml(
+                    t('trDismiss')
+                )}</button>
+                </div>
+                ${getMainTabBarHtml()}
             </div>`;
         document.getElementById('btr').onclick = back;
-        document.getElementById('btn-rem').onclick = () => tg.showAlert(t('trSetR'));
+        document.getElementById('btn-rem').onclick = () => {
+            goMainTab('settings');
+        };
+        const dsm = document.getElementById('btn-tr-dismiss');
+        if (dsm) {
+            dsm.onclick = () => {
+                setTransCardHiddenToday();
+                back();
+            };
+        }
+        bindMainTabBar();
     }
 
     function renderWeekly() {
@@ -2294,6 +2363,14 @@
             const sl = w.sleepPct | 0;
             const dLog = (eb.days_logged | 0) || 0;
             const dLogLabel = dLog === 1 ? t('wkD1') : t('wkDN');
+            const chk = w.checkin;
+            const wkChkLine =
+                chk && chk.summary_line
+                    ? `<div class="nf-card" style="margin-bottom:12px;">
+                        <p class="nf-week-kicker">${escapeHtml(t('wkChkH'))}</p>
+                        <p class="nf-checkin-brief">${escapeHtml(chk.summary_line)}</p>
+                    </div>`
+                    : '';
             $root.innerHTML = `
                 <div class="nf-screen nf-week-screen nf-screen--tabbed">
                     <div class="nf-tabbar-body">
@@ -2307,6 +2384,7 @@
                         </div>
                         ${weekTrendLabel(w.energy_trend)}
                     </div>
+                    ${wkChkLine}
                     <section class="nf-week-block nf-week-block--mood" aria-label="${escapeHtml(t('wkMoodH'))}">
                         <h2 class="nf-week-block-title">${escapeHtml(t('wkMoodH'))}</h2>
                         <p class="nf-week-block-desc">${escapeHtml(t('wkMoodB'))}</p>
@@ -2589,7 +2667,7 @@
         const subCancelled = state.userRow?.subscription_cancelled === true;
         const proExp = state.userRow?.pro_expires_at;
         const paidPro = hasActivePaidPro();
-        const stars = state.userRow?.pro_price_stars ?? 1;
+        const stars = state.userRow?.pro_price_stars ?? 88;
         const paidNotice = paidPro
             ? `<div class="nf-pro-status-compact" role="status">
                     <span class="nf-pro-status-ico" aria-hidden="true">✓</span>

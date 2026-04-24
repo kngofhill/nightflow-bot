@@ -59,14 +59,14 @@ class TestRefundMonthlyCap(unittest.TestCase):
         ym = datetime.now(timezone.utc).strftime("%Y-%m")
         self.assertEqual(p[PRO_REFUND_COUNTS_BY_MONTH_KEY].get(ym), 1)
 
-    def test_limit_reached_at_three(self):
+    def test_limit_reached_at_one(self):
         ym = datetime.now(timezone.utc).strftime("%Y-%m")
-        row3 = {
+        row_at_cap = {
             "notification_prefs": {PRO_REFUND_COUNTS_BY_MONTH_KEY: {ym: MAX_PRO_REFUNDS_PER_UTC_MONTH}}
         }
-        self.assertTrue(pro_refund_month_limit_reached(row3))
-        row2 = {"notification_prefs": {PRO_REFUND_COUNTS_BY_MONTH_KEY: {ym: 2}}}
-        self.assertFalse(pro_refund_month_limit_reached(row2))
+        self.assertTrue(pro_refund_month_limit_reached(row_at_cap))
+        row_under = {"notification_prefs": {PRO_REFUND_COUNTS_BY_MONTH_KEY: {ym: 0}}}
+        self.assertFalse(pro_refund_month_limit_reached(row_under))
 
     def test_try_record_dedupes_same_charge(self):
         prefs = {}

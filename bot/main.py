@@ -52,6 +52,8 @@ from shared.subscription import (
     MSG_CANCEL_ONETIME_EXPLANATION,
     MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK,
     should_skip_telegram_star_cancel,
+    trial_local_days_until_end,
+    TRIAL_3D_REMINDER_SENT_KEY,
 )
 from shared.telegram_invoice import create_invoice_link
 from shared.telegram_star_api import (
@@ -508,6 +510,39 @@ async def check_scheduled_notifications(context: ContextTypes.DEFAULT_TYPE):
             today_s = str(today_local)
             sent_keys = fetch_today_sent_dedup_keys(user_id, today_local)
             prefs = parse_notification_prefs(user)
+
+            # Trial ending soon (3 local days before end) — does not require today's schedule.
+            if not paid_pro_period_active(user):
+                tstate = trial_local_days_until_end(user, timezone_name)
+                if tstate:
+                    d_end, days_left = tstate
+                    if days_left == 3:
+                        rawp = user.get("notification_prefs")
+                        if isinstance(rawp, str):
+                            try:
+                                mp = json.loads(rawp)
+                            except (json.JSONDecodeError, TypeError):
+                                mp = {}
+                        else:
+                            mp = dict(rawp) if isinstance(rawp, dict) else {}
+                        if mp.get(TRIAL_3D_REMINDER_SENT_KEY) != d_end.isoformat():
+                            urow2 = supabase_client.table("users").select("telegram_id").eq("id", user_id).execute()
+                            if urow2.data:
+                                try:
+                                    await context.bot.send_message(
+                                        chat_id=urow2.data[0]["telegram_id"],
+                                        text=(
+                                            f"⏳ Your Nightflow Pro trial ends in 3 days (on {d_end.strftime('%b %d, %Y')}). "
+                                            f"Open the app → Settings to subscribe with {PRO_PRICE_STARS} Stars for 30 days and keep all features."
+                                        ),
+                                    )
+                                    mp[TRIAL_3D_REMINDER_SENT_KEY] = d_end.isoformat()
+                                    supabase_client.table("users").update(
+                                        {"notification_prefs": json.dumps(mp)}
+                                    ).eq("id", user_id).execute()
+                                except Exception as ex:
+                                    logger.error("trial 3d reminder: %s", ex)
+
             st, sched = fetch_effective_schedule_today(user_id, today_s)
             if st == "no_constant" or st == "off" or not sched:
                 continue

@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from shared.schedule_utils import safe_json_parse
 
-# --- # TESTING ONLY — 1 Star price + short trial; production: set PRO_PRICE_STARS = 50
-PRO_PRICE_STARS = 1
-TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(minutes=5)
-# --- end TESTING ONLY ---
-# For a normal 14-day trial instead: TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
+PRO_PRICE_STARS = 88
+TRIAL_ENTITLEMENT_TIMEDELTA = timedelta(days=14)
 
 REFUND_WINDOW_DAYS = 3
 """Max completed Pro (Stars) refunds per UTC calendar month — stored under ``notification_prefs``."""
-MAX_PRO_REFUNDS_PER_UTC_MONTH = 3
+MAX_PRO_REFUNDS_PER_UTC_MONTH = 1
 PRO_REFUND_COUNTS_BY_MONTH_KEY = "pro_refund_counts_by_month"
 """Recent ``telegram_payment_charge_id`` values already counted toward the monthly cap (dedupe bot + Telegram updates)."""
 PRO_REFUND_RECORDED_CHARGE_IDS_KEY = "pro_refund_recorded_charge_ids"
@@ -85,6 +83,8 @@ def trial_period_end(trial_started: datetime) -> datetime:
     return trial_started + TRIAL_ENTITLEMENT_TIMEDELTA
 
 
+TRIAL_3D_REMINDER_SENT_KEY = "trial_3d_reminder_sent_for_end"
+
 def paid_pro_period_active(user_row: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> bool:
     """True if user has an unexpired paid Pro window (``pro_expires_at`` in the future)."""
     if not user_row:
@@ -92,6 +92,34 @@ def paid_pro_period_active(user_row: Optional[Dict[str, Any]], now: Optional[dat
     now = now or datetime.now(timezone.utc)
     pro_exp = _parse_dt(user_row.get("pro_expires_at"))
     return bool(pro_exp and now < pro_exp)
+
+
+def trial_local_days_until_end(
+    user_row: Optional[Dict[str, Any]], tz_name: str, now: Optional[datetime] = None
+) -> Optional[Tuple[date, int]]:
+    """
+    If the user is in an active **trial** (not an active paid Pro window), return
+    (trial_end_date_in_user_tz, days_from_today_to_that_date) for the user's calendar.
+    Otherwise None. Used to notify 3 local days before the trial end date.
+    """
+    if not user_row or paid_pro_period_active(user_row, now):
+        return None
+    ts = _parse_dt(user_row.get("trial_started_at"))
+    if not ts:
+        return None
+    te = trial_period_end(ts)
+    now = now or datetime.now(timezone.utc)
+    if now >= te:
+        return None
+    try:
+        z = ZoneInfo(tz_name or "UTC")
+    except Exception:
+        z = ZoneInfo("UTC")
+    te_l = te.astimezone(z) if te.tzinfo else te.replace(tzinfo=timezone.utc).astimezone(z)
+    d_end = te_l.date()
+    d0 = datetime.now(z).date()
+    days_left = (d_end - d0).days
+    return d_end, days_left
 
 
 def _notification_prefs_dict(user_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -286,7 +314,6 @@ def subscription_meta_for_user(user_row: Optional[Dict[str, Any]], now: Optional
         "pro_expires_at": pro_expires_at,
         "refund_eligible_until": refund_deadline,
         "pro_price_stars": PRO_PRICE_STARS,
-        # TESTING ONLY: short trial; use trial_ends_at for truth (not this day count).
         "trial_days": int(TRIAL_ENTITLEMENT_TIMEDELTA.total_seconds() // 86400),
         "subscription_cancelled": sub_cancel,
         "subscription_active": sub_active,
@@ -368,7 +395,7 @@ def subscription_debug_summary(user_row: Optional[Dict[str, Any]], now: Optional
     lines.append(f"Refund window (3d from payment): {'eligible' if within_refund_window(user_row, now) else 'not eligible'}")
     n = pro_refunds_this_utc_month(user_row, now)
     lines.append(
-        f"Pro refunds this UTC month: {n}/{MAX_PRO_REFUNDS_PER_UTC_MONTH} "
+        f"Pro (Stars) refunds this UTC month: {n}/{MAX_PRO_REFUNDS_PER_UTC_MONTH} "
         f"({'limit reached' if n >= MAX_PRO_REFUNDS_PER_UTC_MONTH else 'under cap'})"
     )
     return "\n".join(lines)

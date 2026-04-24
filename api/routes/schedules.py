@@ -15,7 +15,7 @@ from shared.schedule_utils import (
 )
 from shared.time_utils import get_user_now_from_timezone_name, DEFAULT_TIMEZONE
 from shared.rotating_engine import build_rotating_day_from_pattern_row, pattern_includes_day_work
-from shared.insights import get_habits_effective_from_date, week_query_start, build_bad_habit_suggestion_items
+from shared.insights import get_habits_effective_from_date, week_query_start
 from api.request_util import get_user_from_request
 from api.subscription_access import fetch_user_row_by_id, require_pro_access, user_has_active_constant_schedule
 from shared.subscription import has_pro_entitlement
@@ -275,6 +275,10 @@ def patch_rotating():
     if data.get("cycle_days") is not None:
         upd["cycle_days"] = int(data["cycle_days"])
     supabase_client.table("rotating_patterns").update(upd).eq("id", row["id"]).execute()
+    try:
+        _set_habits_effective_from_today(user_id)
+    except Exception:
+        pass
     r2 = (
         supabase_client.table("rotating_patterns")
         .select("*")
@@ -827,6 +831,32 @@ def _set_habits_effective_from_today(user_id: str) -> None:
     supabase_client.table("users").update({"notification_prefs": prefs}).eq("id", user_id).execute()
 
 
+def _mock_suggestion_items(shift_type: str) -> list:
+    """Placeholder ideas when there is not enough data yet for the current schedule (read-only; no apply)."""
+    st = (shift_type or "constant") == "rotating"
+    tlab = "night · " if st else ""
+    return [
+        {
+            "title": f"☕ {tlab}Sample · coffee window",
+            "body": "When you have a few check-ins on this schedule, we’ll show patterns here.",
+            "action": "Example only — not applied",
+            "is_example": True,
+        },
+        {
+            "title": f"🍽 {tlab}Sample · last meal",
+            "body": "Logging meals against your plan unlocks nudges to protect sleep.",
+            "action": "Example only — not applied",
+            "is_example": True,
+        },
+        {
+            "title": "😴 Sample · rest quality",
+            "body": "End-of-shift reviews feed your week report and better suggestions over time.",
+            "action": "Example only — not applied",
+            "is_example": True,
+        },
+    ]
+
+
 def _build_weekly_suggestion_items(user_id) -> list:
     urow = fetch_user_row_by_id(user_id) or {}
     tz = urow.get("timezone") or DEFAULT_TIMEZONE
@@ -901,22 +931,6 @@ def _build_weekly_suggestion_items(user_id) -> list:
         hh, mm = divmod(mins, 60)
         return f"{hh:02d}:{mm:02d}"
 
-    def _tpl_windows(tpl: dict) -> tuple:
-        if not isinstance(tpl, dict):
-            return ([], [], [])
-        def _l(k):
-            v = tpl.get(k)
-            if isinstance(v, str):
-                return safe_json_parse(v) or []
-            if isinstance(v, list):
-                return v
-            return []
-        return (
-            _l("coffee_windows"),
-            _l("meal_windows"),
-            _l("brightness_windows"),
-        )
-
     suggestions = []
     st = urow.get("shift_type") or "constant"
 
@@ -930,26 +944,13 @@ def _build_weekly_suggestion_items(user_id) -> list:
             .execute()
         )
         if not rpat.data:
-            return []
+            return _mock_suggestion_items("rotating")
         rprow = dict(rpat.data[0])
         sh0 = rprow.get("shifts") or {}
         if isinstance(sh0, str):
             sh0 = safe_json_parse(sh0) or {}
-        ntpl = (sh0.get("night") or {}) if isinstance(sh0, dict) else {}
         dtpl = (sh0.get("day") or {}) if isinstance(sh0, dict) else {}
-        c_n, m_n, b_n = _tpl_windows(ntpl)
-        c_d, m_d, b_d = _tpl_windows(dtpl)
-        for it in build_bad_habit_suggestion_items(
-            ntpl.get("sleep_start"), c_n, m_n, b_n, "night"
-        ):
-            suggestions.append(it)
-        if pattern_includes_day_work(
-            str(sh0.get("pattern_id") or "pitman_2_2_3"), int((sh0.get("block_days") or 0) or 0), sh0
-        ) and dtpl:
-            for it in build_bad_habit_suggestion_items(
-                dtpl.get("sleep_start"), c_d, m_d, b_d, "day"
-            ):
-                suggestions.append(it)
+        # Ideas use shift_summaries (check-ins) for the current schedule only — see eff / week_query_start.
 
         def _rot_missed_best(rpatd: dict, knd: str, pslot: str) -> Optional[Tuple[str, int]]:
             miss_map: dict = {}
@@ -1079,6 +1080,8 @@ def _build_weekly_suggestion_items(user_id) -> list:
                             },
                         }
                     )
+        if not suggestions:
+            return _mock_suggestion_items("rotating")
         return suggestions
 
     # --- constant schedule (permanent) ---
@@ -1090,7 +1093,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
         .execute()
     )
     if not const.data:
-        return []
+        return _mock_suggestion_items("constant")
 
     schedule = dict(const.data[0])
     for f in ("coffee_windows", "meal_windows", "brightness_windows"):
@@ -1114,11 +1117,6 @@ def _build_weekly_suggestion_items(user_id) -> list:
 
     cwin = sorted(cwin, key=lambda x: time_minutes((x or {}).get("time")))
     mwin = sorted(mwin, key=lambda x: time_minutes((x or {}).get("time")))
-
-    for it in build_bad_habit_suggestion_items(
-        schedule.get("sleep_start"), cwin, mwin, bwin, None
-    ):
-        suggestions.append(it)
 
     if cwin:
         coffee_misses = [
@@ -1181,6 +1179,8 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 }
             )
 
+    if not suggestions:
+        return _mock_suggestion_items("constant")
     return suggestions
 
 
@@ -1362,6 +1362,8 @@ def _apply_suggestion_index(user_id: str, urow: dict, idx: int) -> tuple:
     items = _build_weekly_suggestion_items(user_id)
     if idx < 0 or idx >= len(items):
         return None, ({"error": "That suggestion is no longer available. Refresh the list."}, 400)
+    if (items[idx] or {}).get("is_example"):
+        return None, ({"error": "Example ideas cannot be applied."}, 400)
     apply_op = (items[idx] or {}).get("apply")
     if not apply_op or not apply_op.get("op"):
         return None, ({"error": "No apply action for this item"}, 400)

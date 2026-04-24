@@ -33,7 +33,7 @@ bp = Blueprint("subscription", __name__, url_prefix="/api/v1")
 
 @bp.route("/subscription/invoice-link", methods=["POST"])
 def create_stars_invoice_link():
-    """Return invoice URL for Nightflow Pro (XTR / 30 days). # TESTING ONLY: 1 Star via PRO_PRICE_STARS."""
+    """Return invoice URL for Nightflow Pro (XTR / 30 days)."""
     user_id, err = get_user_from_request()
     if err:
         return err

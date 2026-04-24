@@ -311,6 +311,44 @@ def weekly_report():
         sleep_pct = int(round((avg_sleep / 4.0) * 100))
     else:
         sleep_pct = 0
+        avg_sleep = None
+
+    en_vals = []
+    rs_vals = []
+    checkin_days = 0
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        if eff and d < eff:
+            continue
+        r = summaries_by_date.get(str(d))
+        if not r:
+            continue
+        got = False
+        if r.get("energy") is not None:
+            en_vals.append(int(r.get("energy")))
+            got = True
+        if r.get("sleep_quality") is not None:
+            rs_vals.append(int(r.get("sleep_quality")))
+            got = True
+        if got:
+            checkin_days += 1
+
+    checkin_block = None
+    if en_vals or rs_vals:
+        parts = []
+        if en_vals:
+            ae = sum(en_vals) / len(en_vals)
+            parts.append(f"post-shift energy avg {ae:.1f}/4 (from {len(en_vals)} log" + ("s" if len(en_vals) != 1 else "") + ")")
+        if rs_vals:
+            ar = sum(rs_vals) / len(rs_vals)
+            parts.append(f"rest / sleep quality avg {ar:.1f}/4 (from {len(rs_vals)} log" + ("s" if len(rs_vals) != 1 else "") + ")")
+        line = " · ".join(parts) + f" — {checkin_days} day" + ("s" if checkin_days != 1 else "") + " with check-ins in this week."
+        checkin_block = {
+            "summary_line": line,
+            "n_days": checkin_days,
+            "avg_energy": round(sum(en_vals) / len(en_vals), 2) if en_vals else None,
+            "avg_rest": round(sum(rs_vals) / len(rs_vals), 2) if rs_vals else None,
+        }
 
     coffee_pcts = [c["pct"] for c in coffee] if coffee else []
     meal_pcts = [m["pct"] for m in meals] if meals else []
@@ -338,5 +376,7 @@ def weekly_report():
             "avg_meal_adherence_pct": avg_meal,
         },
     }
+    if checkin_block is not None:
+        report_data["checkin"] = checkin_block
 
     return jsonify(report_data)
