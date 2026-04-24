@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from telegram import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from telegram import KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import filters
 
 from shared.subscription import (
@@ -26,6 +26,7 @@ REPLY_BTN_COMMANDS = "📋 Commands"
 
 REPLY_MENU_TEXT_BUTTONS = (
     REPLY_BTN_PROFILE,
+    REPLY_BTN_MINI_APP,
     REPLY_BTN_COMMANDS,
     REPLY_BTN_SUPPORT,
 )
@@ -58,7 +59,7 @@ BOT_COMMANDS_HELP = """\
 /status — Debug timestamps (testing)
 /lang — Language info (English only)
 
-Tip: schedules and check-ins live in the <b>Mini App</b> (📱 key or ⋮ menu).
+Tip: tap <b>📱 Mini App</b> on the keyboard, then <b>Open Nightflow</b> on the bot message (Telegram needs this for a signed session). Or use the ⋮ menu.
 
 <b>Support</b> — tap 💬 Support (bot sends a link) or message @nightflowadmin
 """
@@ -69,13 +70,12 @@ def webapp_url() -> str:
 
 
 def reply_main_menu_keyboard() -> ReplyKeyboardMarkup:
-    """2×2 bottom keys (Profile | Mini App, Commands | Support) — ``resize_keyboard`` for slim rows."""
-    wu = webapp_url()
+    """2×2 bottom keys. Mini App is text-only: ``web_app`` on reply keys often opens without initData — bot sends an inline Web App button."""
     return ReplyKeyboardMarkup(
         [
             [
                 KeyboardButton(REPLY_BTN_PROFILE),
-                KeyboardButton(REPLY_BTN_MINI_APP, web_app=WebAppInfo(url=wu)),
+                KeyboardButton(REPLY_BTN_MINI_APP),
             ],
             [
                 KeyboardButton(REPLY_BTN_COMMANDS),

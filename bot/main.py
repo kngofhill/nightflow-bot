@@ -39,6 +39,7 @@ from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
 from shared.bot_menu import (
     BOT_COMMANDS_HELP,
     REPLY_BTN_COMMANDS,
+    REPLY_BTN_MINI_APP,
     REPLY_BTN_PROFILE,
     REPLY_BTN_SUPPORT,
     SUPPORT_REPLY_HTML,
@@ -245,8 +246,28 @@ async def deliver_support(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> N
     )
 
 
+async def deliver_mini_app_launcher(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Reply-keyboard ``web_app`` often launches without ``initData``; inline ``web_app`` is reliable."""
+    wu = webapp_url()
+    await context.bot.send_message(
+        chat_id,
+        "Tap <b>Open Nightflow</b> below — that opens the app with your Telegram session.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Open Nightflow",
+                        web_app=WebAppInfo(url=wu),
+                    )
+                ]
+            ]
+        ),
+    )
+
+
 async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Profile, Commands, Support — Mini App uses ``web_app`` (no message text)."""
+    """Profile, Mini App launcher, Commands, Support."""
     if not update.message or not update.message.text:
         return
     text = update.message.text.strip()
@@ -254,6 +275,8 @@ async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYP
     uid = update.effective_user.id
     if text == REPLY_BTN_PROFILE:
         await deliver_profile(context, chat_id, uid)
+    elif text == REPLY_BTN_MINI_APP:
+        await deliver_mini_app_launcher(context, chat_id)
     elif text == REPLY_BTN_COMMANDS:
         await deliver_commands_help(context, chat_id)
     elif text == REPLY_BTN_SUPPORT:
