@@ -212,6 +212,10 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await deliver_pause(context, chat_id, uid)
     elif act == "resume":
         await deliver_resume(context, chat_id, uid)
+    elif act == "cancel":
+        await deliver_cancel(context, chat_id, uid)
+    elif act == "refund":
+        await deliver_refund(context, chat_id, uid)
     elif act == "lang":
         await context.bot.send_message(chat_id, LANG_ONLY, parse_mode="HTML")
 
@@ -278,24 +282,30 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 
-async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Refunds Stars via ``refundStarPayment``, then clears Pro in DB. Same 3-day window as Telegram policy."""
-    tid = update.effective_user.id
+async def deliver_refund(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, from_user_id: int
+) -> None:
+    """Refunds Stars via ``refundStarPayment``; also used from inline 'Refund' button."""
+    tid = from_user_id
+
+    async def reply(msg: str, **kwargs):
+        await context.bot.send_message(chat_id, msg, **kwargs)
+
     try:
         row = get_user_by_telegram_id(tid)
         if not paid_pro_period_active(row):
-            await update.message.reply_text(
+            await reply(
                 "No active paid Nightflow Pro subscription to refund. "
                 "(Trial-only users are not charged; there is nothing to refund.)"
             )
             return
         if not within_refund_window(row):
-            await update.message.reply_text(
+            await reply(
                 "Refunds are only allowed within the first 3 days after purchase."
             )
             return
         if pro_refund_month_limit_reached(row):
-            await update.message.reply_text(
+            await reply(
                 f"You have already used the maximum of {MAX_PRO_REFUNDS_PER_UTC_MONTH} Pro (Stars) refunds "
                 "in this calendar month (UTC). This limit prevents purchase–refund cycling. You can use /refund again "
                 "next month, or contact support for genuine billing issues."
@@ -310,12 +320,12 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 revoke_pro_subscription(tid)
             except Exception as e:
                 logger.exception("revoke_pro_subscription: %s", e)
-                await update.message.reply_text(
+                await reply(
                     "Could not update the database. Run the Supabase migration that adds "
                     "users.telegram_payment_charge_id, then try /refund again."
                 )
                 return
-            await update.message.reply_text(
+            await reply(
                 "Pro access was removed. There was no payment id on file, so the bot could not "
                 "call Telegram to return Stars. After the DB migration, new payments will store the id for refunds."
             )
@@ -334,15 +344,15 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     revoke_pro_subscription(tid)
                 except Exception as db_e:
                     logger.exception("revoke after Telegram already-refunded: %s", db_e)
-                    await update.message.reply_text(
+                    await reply(
                         f"Telegram says this was already refunded, but the database update failed: {str(db_e)[:200]}"
                     )
                     return
-                await update.message.reply_text(
+                await reply(
                     "This payment was already refunded in Telegram. Pro access is cleared to match your account."
                 )
                 return
-            await update.message.reply_text(
+            await reply(
                 f"Could not refund Stars. Pro access is unchanged. Try again or use Telegram’s payment history. Details:\n{err_s[:500]}"
             )
             return
@@ -351,19 +361,26 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
             revoke_pro_subscription(tid)
         except Exception as e:
             logger.exception("revoke after successful refund_star_payment: %s", e)
-            await update.message.reply_text(
+            await reply(
                 "Stars were refunded in Telegram, but clearing Pro in the database failed. "
                 "Run the Supabase migration, then an admin can fix the row or you can try /refund again."
             )
             return
         record_pro_refund_for_rate_limit(tid, str(charge_id))
-        await update.message.reply_text("Stars refunded and Pro access removed.")
+        await reply("Stars refunded and Pro access removed.")
     except Exception as e:
         logger.exception("cmd_refund: %s", e)
-        await update.message.reply_text(
+        await reply(
             "Something went wrong processing /refund. Check server logs. "
             "If the database is missing the latest migration, apply it in Supabase and redeploy."
         )
+
+
+async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """``/refund`` — same as the inline Refund button."""
+    await deliver_refund(
+        context, update.effective_chat.id, update.effective_user.id
+    )
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -377,13 +394,19 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stop Telegram Stars auto-renewal. Keeps Pro until pro_expires_at."""
-    tid = update.effective_user.id
+async def deliver_cancel(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, from_user_id: int
+) -> None:
+    """Stop Telegram Stars auto-renewal; also used from inline 'Cancel' button."""
+    tid = from_user_id
+
+    async def reply(msg: str, **kwargs):
+        await context.bot.send_message(chat_id, msg, **kwargs)
+
     row = get_user_by_telegram_id(tid) or {}
     meta = subscription_meta_for_user(row)
     if not meta.get("can_cancel_star_subscription"):
-        await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
+        await reply(explain_cannot_cancel_star_subscription(row, meta))
         return
 
     pe = meta.get("pro_expires_at") or "the end date in /status"
@@ -392,18 +415,18 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
         m = mark_star_subscription_cancelled(tid)
         body = MSG_CANCEL_ONETIME_EXPLANATION.format(pro_exp=pe)
         if m is None:
-            await update.message.reply_text(
+            await reply(
                 f"{body}\n\n"
                 "Note: the database could not store the “cancelled” flag. "
                 "Run Supabase migration `20260422120000_subscription_cancel_and_active.sql`."
             )
         else:
-            await update.message.reply_text(body)
+            await reply(body)
         return
 
     ch = row.get("telegram_payment_charge_id")
     if not ch:
-        await update.message.reply_text(explain_cannot_cancel_star_subscription(row, meta))
+        await reply(explain_cannot_cancel_star_subscription(row, meta))
         return
 
     try:
@@ -418,14 +441,14 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
             m = mark_star_subscription_cancelled(tid)
             body = MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK.format(pro_exp=pe)
             if m is None:
-                await update.message.reply_text(
+                await reply(
                     f"{body}\n\n"
                     "The database could not store the “cancelled” flag — run migration 20260422120000."
                 )
             else:
-                await update.message.reply_text(body)
+                await reply(body)
             return
-        await update.message.reply_text(format_telegram_cancel_subscription_error(e))
+        await reply(format_telegram_cancel_subscription_error(e))
         return
     except Exception as e:
         logger.exception("edit_user_star_subscription unexpected: %s", e)
@@ -433,13 +456,13 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
             m = mark_star_subscription_cancelled(tid)
             body = MSG_CANCEL_TELEGRAM_CHARGE_INVALID_FALLBACK.format(pro_exp=pe)
             if m is None:
-                await update.message.reply_text(
+                await reply(
                     f"{body}\n\nThe database could not store the “cancelled” flag — run migration 20260422120000."
                 )
             else:
-                await update.message.reply_text(body)
+                await reply(body)
             return
-        await update.message.reply_text(
+        await reply(
             f"Unexpected error talking to Telegram: {type(e).__name__}: {e!s}\n\n"
             f"{format_telegram_cancel_subscription_error(e)}"
         )
@@ -447,15 +470,22 @@ async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_
 
     m = mark_star_subscription_cancelled(tid)
     if m is None:
-        await update.message.reply_text(
+        await reply(
             "Telegram accepted the cancellation, but the database could not store the “cancelled” flag. "
             "An admin should run Supabase migration `20260422120000_subscription_cancel_and_active.sql`. "
             f"Your Pro access should still be valid until {pe} if Telegram shows auto-renewal off."
         )
         return
 
-    await update.message.reply_text(
+    await reply(
         f"Auto-renewal is off. You keep Nightflow Pro until {pe} (no more automatic Star charges for this plan after that, unless you subscribe again)."
+    )
+
+
+async def cmd_cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """``/cancel`` — same as the inline Cancel button."""
+    await deliver_cancel(
+        context, update.effective_chat.id, update.effective_user.id
     )
 
 
