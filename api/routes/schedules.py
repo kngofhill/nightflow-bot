@@ -910,7 +910,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 continue
             r = summaries_by_date.get(str(d))
             if not r:
-                missed += 1
+                # No EOD for this day: unknown, not a "miss" (otherwise new accounts get 7/7 with no data).
                 continue
             arr_key = "meals" if coffee_or_meal_kind == "meals" else "coffee"
             resp = parse_responses(r.get("responses"))
@@ -981,16 +981,18 @@ def _build_weekly_suggestion_items(user_id) -> list:
                     if not tt:
                         continue
                     tkey = _norm_slot_time(tt)
-                    elig[tkey] = elig.get(tkey, 0) + 1
                     r = summaries_by_date.get(str(d0))
+                    if not r:
+                        # Same as constant: no summary that day = no signal, not a miss.
+                        continue
+                    elig[tkey] = elig.get(tkey, 0) + 1
                     miss = True
-                    if r:
-                        arr = (parse_responses(r.get("responses"))).get(arrk) or []
-                        for itx in arr:
-                            if itx and _norm_slot_time(itx.get("time")) == tkey:
-                                if int(itx.get("rating") or 0) > 1:
-                                    miss = False
-                                break
+                    arr = (parse_responses(r.get("responses"))).get(arrk) or []
+                    for itx in arr:
+                        if itx and _norm_slot_time(itx.get("time")) == tkey:
+                            if int(itx.get("rating") or 0) > 1:
+                                miss = False
+                            break
                     if miss:
                         miss_map[tkey] = miss_map.get(tkey, 0) + 1
                 d0 += timedelta(days=1)
