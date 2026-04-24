@@ -51,7 +51,22 @@
         /* not available in all runtimes */
     }
 
-    const user = tg.initDataUnsafe?.user;
+    /** Telegram user from WebApp; reply-keyboard Mini App sometimes omits initDataUnsafe until initData is read. */
+    function resolveTelegramUser() {
+        const u = tg.initDataUnsafe && tg.initDataUnsafe.user;
+        if (u) return u;
+        const raw = tg.initData;
+        if (!raw || typeof raw !== 'string') return null;
+        try {
+            const enc = new URLSearchParams(raw).get('user');
+            if (!enc) return null;
+            return JSON.parse(decodeURIComponent(enc));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    let user = resolveTelegramUser();
 
     const state = {
         screen: 'loading',
@@ -4150,6 +4165,13 @@
     }
 
     async function boot() {
+        if (!user) user = resolveTelegramUser();
+        if (!user) {
+            await new Promise(function (r) {
+                setTimeout(r, 150);
+            });
+            user = resolveTelegramUser();
+        }
         if (!user) {
             $root.innerHTML = `<div class="nf-error">${escapeHtml(t('errBoot'))}</div>`;
             return;
