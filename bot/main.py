@@ -35,7 +35,14 @@ from shared.db import (
     set_user_ui_language,
 )
 from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
-from shared.bot_menu import command_menu_markup, webapp_url
+from shared.bot_menu import (
+    REPLY_BTN_CANCEL,
+    REPLY_BTN_REFUND,
+    REPLY_BTN_SUBSCRIBE,
+    reply_main_menu_keyboard,
+    reply_menu_text_filter,
+    webapp_url,
+)
 from shared.subscription import (
     INVOICE_PAYLOAD_NIGHTFLOW_PRO,
     MAX_PRO_REFUNDS_PER_UTC_MONTH,
@@ -98,12 +105,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             INTRO,
             parse_mode="HTML",
-            reply_markup=command_menu_markup(),
+            reply_markup=reply_main_menu_keyboard(),
         )
     else:
         await update.message.reply_text(
             welcome_back(user.first_name or "there", "en"),
-            reply_markup=command_menu_markup(),
+            reply_markup=reply_main_menu_keyboard(),
         )
 
 
@@ -122,17 +129,15 @@ async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     await q.answer()
     try:
-        await q.edit_message_text(
-            text=msg_language_saved("en"),
-            reply_markup=command_menu_markup(),
-        )
+        # editMessageText only supports inline keyboards; reply menu is sent on /start.
+        await q.edit_message_text(text=msg_language_saved("en"))
     except Exception as e:
         logger.warning("edit_message after lang: %s", e)
         try:
             await context.bot.send_message(
                 chat_id=tid,
                 text=msg_language_saved("en"),
-                reply_markup=command_menu_markup(),
+                reply_markup=reply_main_menu_keyboard(),
             )
         except Exception as e2:
             logger.error("send_message after lang: %s", e2)
@@ -199,6 +204,7 @@ async def deliver_resume(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
 
 
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Legacy inline ``menu:*`` buttons on old messages; reply keyboard is primary."""
     q = update.callback_query
     if not q or not str(q.data).startswith("menu:"):
         return
@@ -218,6 +224,21 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await deliver_refund(context, chat_id, uid)
     elif act == "lang":
         await context.bot.send_message(chat_id, LANG_ONLY, parse_mode="HTML")
+
+
+async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bottom reply keyboard (Subscribe / Cancel / Refund). Mini App opens via web_app, no text."""
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    uid = update.effective_user.id
+    if text == REPLY_BTN_SUBSCRIBE:
+        await deliver_subscribe(context, chat_id, uid)
+    elif text == REPLY_BTN_CANCEL:
+        await deliver_cancel(context, chat_id, uid)
+    elif text == REPLY_BTN_REFUND:
+        await deliver_refund(context, chat_id, uid)
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -728,6 +749,7 @@ def main():
     application.add_handler(
         CommandHandler(["lang", "language", "setlang"], cmd_lang)
     )
+    application.add_handler(MessageHandler(reply_menu_text_filter(), on_reply_menu_button))
     application.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
     application.add_handler(CommandHandler("pause", pause))
