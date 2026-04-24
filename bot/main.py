@@ -9,7 +9,9 @@ import traceback
 
 from telegram import (
     Update,
+    BotCommand,
     MenuButtonWebApp,
+    ReplyKeyboardRemove,
     WebAppInfo,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -37,11 +39,8 @@ from shared.db import (
 from shared.bot_i18n import INTRO, welcome_back, msg_language_saved, LANG_ONLY
 from shared.bot_menu import (
     BOT_COMMANDS_HELP,
-    REPLY_BTN_COMMANDS,
-    REPLY_BTN_PROFILE,
     format_telegram_profile,
-    reply_main_menu_keyboard,
-    reply_menu_text_filter,
+    main_menu_inline_markup,
     webapp_url,
 )
 from shared.subscription import (
@@ -106,13 +105,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             INTRO,
             parse_mode="HTML",
-            reply_markup=reply_main_menu_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
         )
     else:
         await update.message.reply_text(
             welcome_back(user.first_name or "there", "en"),
-            reply_markup=reply_main_menu_keyboard(),
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
         )
+    await update.message.reply_text(
+        "<b>Menu</b>",
+        parse_mode="HTML",
+        reply_markup=main_menu_inline_markup(),
+    )
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -138,7 +143,7 @@ async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=tid,
                 text=msg_language_saved("en"),
-                reply_markup=reply_main_menu_keyboard(),
+                reply_markup=main_menu_inline_markup(),
             )
         except Exception as e2:
             logger.error("send_message after lang: %s", e2)
@@ -207,17 +212,27 @@ async def deliver_resume(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_
 async def deliver_profile(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
     row = get_user_by_telegram_id(user_id)
     text = format_telegram_profile(row)
-    await context.bot.send_message(chat_id, text, parse_mode="HTML")
+    await context.bot.send_message(
+        chat_id,
+        text,
+        parse_mode="HTML",
+        reply_markup=main_menu_inline_markup(),
+    )
 
 
 async def deliver_commands_help(
     context: ContextTypes.DEFAULT_TYPE, chat_id: int
 ) -> None:
-    await context.bot.send_message(chat_id, BOT_COMMANDS_HELP, parse_mode="HTML")
+    await context.bot.send_message(
+        chat_id,
+        BOT_COMMANDS_HELP,
+        parse_mode="HTML",
+        reply_markup=main_menu_inline_markup(),
+    )
 
 
 async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Legacy inline ``menu:*`` buttons on old messages; reply keyboard is primary."""
+    """Inline ``menu:*`` (main grid + legacy subscribe/pause/… on old messages)."""
     q = update.callback_query
     if not q or not str(q.data).startswith("menu:"):
         return
@@ -225,7 +240,11 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = q.message.chat_id
     uid = q.from_user.id
     await q.answer()
-    if act == "sub":
+    if act == "profile":
+        await deliver_profile(context, chat_id, uid)
+    elif act == "commands":
+        await deliver_commands_help(context, chat_id)
+    elif act == "sub":
         await deliver_subscribe(context, chat_id, uid)
     elif act == "pause":
         await deliver_pause(context, chat_id, uid)
@@ -236,26 +255,16 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif act == "refund":
         await deliver_refund(context, chat_id, uid)
     elif act == "lang":
-        await context.bot.send_message(chat_id, LANG_ONLY, parse_mode="HTML")
-
-
-async def on_reply_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Profile & Commands. Mini App and Support use web_app / URL (no chat text)."""
-    if not update.message or not update.message.text:
-        return
-    text = update.message.text.strip()
-    chat_id = update.effective_chat.id
-    uid = update.effective_user.id
-    if text == REPLY_BTN_PROFILE:
-        await deliver_profile(context, chat_id, uid)
-    elif text == REPLY_BTN_COMMANDS:
-        await deliver_commands_help(context, chat_id)
+        await context.bot.send_message(
+            chat_id,
+            LANG_ONLY,
+            parse_mode="HTML",
+            reply_markup=main_menu_inline_markup(),
+        )
 
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await deliver_profile(
-        context, update.effective_chat.id, update.effective_user.id
-    )
+    await deliver_profile(context, update.effective_chat.id, update.effective_user.id)
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -736,18 +745,32 @@ async def log_errors(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(application: Application):
-    """Set menu button and ensure we're in polling mode."""
+    """Webhook cleanup, menu button, and command list (see core.telegram.org/bots/features#commands)."""
     try:
         # IMPORTANT: Delete any existing webhook FIRST
         await application.bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook deleted - forcing polling mode")
-        
-        # Then set menu button (this doesn't affect polling)
+
         wu = webapp_url()
         await application.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(text="🌙 Nightflow", web_app=WebAppInfo(url=wu))
         )
         logger.info("✅ Menu button set successfully")
+
+        await application.bot.set_my_commands(
+            [
+                BotCommand("start", "Welcome and menu"),
+                BotCommand("profile", "Subscription and schedule"),
+                BotCommand("subscribe", "Buy Nightflow Pro (Stars)"),
+                BotCommand("cancel", "Stop subscription auto-renewal"),
+                BotCommand("refund", "Refund within policy window"),
+                BotCommand("pause", "Pause shift reminders"),
+                BotCommand("resume", "Resume shift reminders"),
+                BotCommand("status", "Debug subscription info"),
+                BotCommand("lang", "Language (English only)"),
+            ]
+        )
+        logger.info("✅ Bot commands registered for / menu")
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
 
@@ -767,7 +790,6 @@ def main():
         CommandHandler(["lang", "language", "setlang"], cmd_lang)
     )
     application.add_handler(CommandHandler("profile", cmd_profile))
-    application.add_handler(MessageHandler(reply_menu_text_filter(), on_reply_menu_button))
     application.add_handler(CallbackQueryHandler(on_menu_callback, pattern=r"^menu:"))
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern=r"^set_lang:"))
     application.add_handler(CommandHandler("pause", pause))
