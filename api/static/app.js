@@ -1576,9 +1576,16 @@
     function mockSuggestions() {
         return [
             {
-                title: '🦆 OFFLINE: fake coffee with the moon penguins',
-                body: "These are jokes — server didn't load. Real ideas need the API.",
-                action: "Still not your data.",
+                title: '🦆 Placeholder',
+                body: 'Offline or no API — not your data.',
+                action: 'N/A',
+                is_example: true,
+                silly_example: true,
+            },
+            {
+                title: '🥪 Example',
+                body: 'Connect to load real ideas.',
+                action: 'N/A',
                 is_example: true,
                 silly_example: true,
             },
@@ -2175,7 +2182,7 @@
         $root.innerHTML = `<div class="nf-loading">${escapeHtml(t('loadFull'))}</div>`;
 
         (async () => {
-            let items = mockSuggestions();
+            let items = [];
             let sugMode = 'examples';
             try {
                 const res = await api(`/schedules/suggestions?telegram_id=${user.id}`);
@@ -2186,8 +2193,6 @@
                         const realOnly = raw.filter((x) => x && !x.is_example);
                         items = realOnly.length > 0 ? realOnly : raw;
                         sugMode = data.suggestions_mode || (items[0] && items[0].is_example ? 'examples' : 'live');
-                    } else {
-                        items = Array.isArray(raw) && raw.length === 0 ? [] : items;
                     }
                 }
             } catch (e) {
@@ -2198,14 +2203,27 @@
             state.suggestionItems = items;
 
             const ignored = getIgnoredSuggestionSet();
-            const visible = items
-                .map((it, origIdx) => ({ it, origIdx }))
-                .filter(({ it }) => it && !ignored.has(suggestionFingerprint(it)));
+            const notIgnored = (it) => it && !ignored.has(suggestionFingerprint(it));
 
-            const hasApplicable = visible.some(({ it: x }) => x && !x.is_example);
-            const leadIdeas = sugMode === 'examples' ? t('sugMockLead') : t('sugL');
-            const sugRows = visible.length
-                ? visible
+            const visibleReal = items.filter((it) => it && !it.is_example && notIgnored(it));
+
+            let displayPairs;
+            let effectiveMode = sugMode;
+            if (visibleReal.length > 0) {
+                displayPairs = items
+                    .map((it, origIdx) => ({ it, origIdx }))
+                    .filter(({ it }) => it && !it.is_example && notIgnored(it));
+            } else {
+                const serverExamples = items.filter((it) => it && it.is_example);
+                const fallback = serverExamples.length ? serverExamples : mockSuggestions();
+                displayPairs = fallback.map((it, i) => ({ it, origIdx: -1 - i }));
+                effectiveMode = 'examples';
+            }
+
+            const hasApplicable = displayPairs.some(({ it: x }) => x && !x.is_example);
+            const leadIdeas = effectiveMode === 'examples' ? t('sugMockLead') : t('sugL');
+            const sugRows = displayPairs.length
+                ? displayPairs
                       .map(({ it, origIdx }) => {
                           if (it && it.is_example) {
                               return `<div class="nf-suggestion nf-suggestion--example" data-sug-idx="${origIdx}">

@@ -271,8 +271,7 @@
             fsD7: '7d',
             loadFull: '…',
             sugL: 'Pick ideas → apply once. Ignored = hidden.',
-            sugMockLead:
-                'Below are silly placeholder cards — not your data. They disappear as soon as real ideas exist for your current schedule.',
+            sugMockLead: 'Placeholders — not real. Shown when there are no ideas or you hid them all.',
             sugIg: 'Ignore',
             sugAdj: 'Settings',
             sugAp: 'Apply',
@@ -280,7 +279,7 @@
             sugEm: 'Nothing right now.',
             sugEm2: 'Log more or clear ignore.',
             sugEx: 'Silly placeholder',
-            sugMockSub: 'Not real — just so the list is not empty.',
+            sugMockSub: 'Example only.',
             sugUp: (n) => `Updated ${n}.`,
             sugUp1: 'Updated 1.',
             trT: 'Night → Day',

@@ -408,6 +408,10 @@ def patch_constant():
         return jsonify({"error": "No updatable fields provided"}), 400
 
     supabase_client.table("constant_schedules").update(updates).eq("id", row_id).execute()
+    try:
+        _set_habits_effective_from_today(user_id)
+    except Exception:
+        pass
 
     refreshed = (
         supabase_client.table("constant_schedules")
@@ -832,29 +836,53 @@ def _set_habits_effective_from_today(user_id: str) -> None:
     supabase_client.table("users").update({"notification_prefs": prefs}).eq("id", user_id).execute()
 
 
+def _canon_time(val) -> str:
+    if val is None or val == "":
+        return ""
+    tc = str_to_time(str(val)[:8])
+    return time_to_str(tc) if tc else str(val)[:5].strip()
+
+
+def _rot_day_matches_stable_template(comp: dict, sh0: dict, pslot: str) -> bool:
+    """
+    Use rotating check-ins only for days that match the current night/day template
+    (work & sleep), not transition days or system-tweaked sleep windows.
+    """
+    if not comp or comp.get("shift_type") == "off":
+        return False
+    if comp.get("is_transition_day"):
+        return False
+    tpl = sh0.get(pslot) if pslot in ("night", "day") else None
+    if not isinstance(tpl, dict):
+        return True
+    for key in ("work_start", "work_end"):
+        tv, cv = tpl.get(key), comp.get(key)
+        if tv and _canon_time(tv) != _canon_time(cv):
+            return False
+    for key in ("sleep_start", "sleep_end"):
+        tv, cv = tpl.get(key), comp.get(key)
+        if str(tv or "").strip() and str(cv or "").strip():
+            if _canon_time(tv) != _canon_time(cv):
+                return False
+    return True
+
+
 def _mock_suggestion_items(shift_type: str) -> list:
-    """Silly placeholder ideas only when there is no real data for the current schedule (read-only; no apply)."""
-    st = (shift_type or "constant") == "rotating"
-    tlab = "night · " if st else ""
+    """Short placeholders when there are no real ideas (read-only; no apply)."""
+    rot = (shift_type or "constant") == "rotating"
+    pfx = "Rot · " if rot else ""
     return [
         {
-            "title": f"🦆 {tlab}FAKE: coffee with the moon penguins at 13:37",
-            "body": "Not your data. We made this up so the screen isn’t empty. Real ideas use check-ins on your current schedule type only.",
-            "action": "Nope — it’s a joke. Wait for real ideas.",
+            "title": f"🦆 {pfx}Placeholder",
+            "body": "Joke card — not your data.",
+            "action": "N/A",
             "is_example": True,
             "silly_example": True,
         },
         {
-            "title": f"🥪 {tlab}SILLY: midnight sandwich parade",
-            "body": "Still not real. After you log a few days on this shift type, silly ducks swim away and real nudges appear.",
-            "action": "Cannot apply. Placeholder only.",
-            "is_example": True,
-            "silly_example": True,
-        },
-        {
-            "title": "🧸 Example: your pillow didn’t file taxes",
-            "body": "These cards vanish the moment we have a real pattern from your latest schedule. Nothing here changes your plan.",
-            "action": "Just a joke. Keep logging check-ins.",
+            "title": f"🥪 {pfx}Example",
+            "body": "Log check-ins for real suggestions.",
+            "action": "N/A",
             "is_example": True,
             "silly_example": True,
         },
@@ -974,6 +1002,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 ):
                     d0 += timedelta(days=1)
                     continue
+                if not _rot_day_matches_stable_template(comp, sh0, pslot):
+                    d0 += timedelta(days=1)
+                    continue
                 wkey = "meal_windows" if knd == "meals" else "coffee_windows"
                 arrk = "meals" if knd == "meals" else "coffee"
                 for w in (comp.get(wkey) or []):
@@ -1012,7 +1043,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 suggestions.append(
                     {
                         "title": f"☕ {lab} · {t_best} coffee",
-                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
+                        "body": f"Weak logs on {m_ct} {pslot} day(s) — same template work/sleep only (no transition days).",
                         "action": f"MOVE TO {n_t} (on {pslot} template)",
                         "apply": {
                             "op": "shift_coffee",
@@ -1029,7 +1060,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
                 suggestions.append(
                     {
                         "title": f"🍽 {lab} · {t_best} meal",
-                        "body": f"Log looked weak on {m_ct} of your {pslot} days this week.",
+                        "body": f"Weak logs on {m_ct} {pslot} day(s) — same template work/sleep only (no transition days).",
                         "action": f"MOVE TO {n_t} (on {pslot} template)",
                         "apply": {
                             "op": "shift_meal",
@@ -1054,6 +1085,9 @@ def _build_weekly_suggestion_items(user_id) -> list:
                     or comp.get("pattern_slot") != pslot
                     or comp.get("shift_type") == "off"
                 ):
+                    d0 += timedelta(days=1)
+                    continue
+                if not _rot_day_matches_stable_template(comp, sh0, pslot):
                     d0 += timedelta(days=1)
                     continue
                 r = summaries_by_date.get(str(d0))
@@ -1138,7 +1172,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
             suggestions.append(
                 {
                     "title": f"☕ {top_time} COFFEE",
-                    "body": f"Missed {top_missed} times in days after your last schedule change.",
+                    "body": f"Missed {top_missed} times since your last permanent schedule update (same hours).",
                     "action": f"MOVE TO {n_t}",
                     "apply": {"op": "shift_coffee", "from": _norm_slot_time(top_time), "to": n_t},
                 }
@@ -1157,7 +1191,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
             suggestions.append(
                 {
                     "title": f"🍽️ {top_time} MEAL",
-                    "body": f"Missed {top_missed} times in days after your last schedule change.",
+                    "body": f"Missed {top_missed} times since your last permanent schedule update (same hours).",
                     "action": f"MOVE TO {n_t}",
                     "apply": {"op": "shift_meal", "from": _norm_slot_time(top_time), "to": n_t},
                 }
@@ -1180,7 +1214,7 @@ def _build_weekly_suggestion_items(user_id) -> list:
             suggestions.append(
                 {
                     "title": "😴 SLEEP WINDOW",
-                    "body": f"Sleep quality was low in days since your last schedule change.",
+                    "body": "Sleep quality was low on recent days matching your current permanent hours.",
                     "action": "ADD 30 MINUTES (earlier to bed)",
                     "apply": {"op": "extend_sleep", "delta_minutes": 30},
                 }
